@@ -4,11 +4,20 @@ static char token_name[TKN_COUNT][256] = {
     "TKN_ID",
     "TKN_INT",
     "TKN_PLUS",
+    "TKN_MINUS",
     "TKN_PRINT"
 };
 
+static void malloc_check(void *block, char *info) {
+    if (block == NULL) {
+        fprintf(stderr, "[ERROR] malloc returned null\n[INFO] %s\n", info);
+        exit(1);
+    }
+}
+
 token_t *token_create() {
     token_t *token = malloc(sizeof(token_t));
+    malloc_check(token, "in function token_create");
     token->type = -1;
     token->val = NULL;
     return token;
@@ -18,13 +27,17 @@ void token_update(token_t *token, int type, char *val) {
     token->type = type;
     if (val != NULL) {
         if (type != TKN_INT) {
-            printf("ERROR: %s can't have a value.\n", token_name[type]);
+            fprintf(stderr, "[ERROR] %s can't have a value\n", token_name[type]);
+            exit(1);
         }
         if (token->val != NULL) {
-            if (strlen(val) > strlen(token->val))
+            if (strlen(val) > strlen(token->val)) {
                 token->val = realloc(token->val, strlen(val));
+                malloc_check(token->val, "realloc(token->val) in function token_update");
+            }
         } else {
             token->val = malloc(strlen(val));
+            malloc_check(token->val, "malloc(token->val) in function token_update");
         }
         strcpy(token->val, val);
     } else if (token->val != NULL) {
@@ -78,15 +91,18 @@ static int word_is_int(char *word) {
 
 lexer_t *lexer_create(char *program) {
     lexer_t *lexer = malloc(sizeof(lexer_t));
+    malloc_check(lexer, "malloc(lexer) in function lexer_create");
 
     lexer->cur_token = token_create();
     lexer->idx = 0;
 
     lexer->word_list = malloc(sizeof(char *));
+    malloc_check(lexer, "malloc(lexer->word_list) in function lexer_create");
     lexer->word_size = 0;
     lexer->word_alloc = 1;
 
     char *word = malloc(sizeof(char));
+    malloc_check(lexer, "malloc(word) in function lexer_create");
     size_t word_size = 0;
     size_t word_alloc = 1;
 
@@ -94,9 +110,10 @@ lexer_t *lexer_create(char *program) {
         if (program[i] == ' ' || program[i] == '\t' || program[i] == '\n') {
 
             if (word_size > 0) {
-                word[word_size + 1] = '\0';
+                word[word_size] = '\0';
                 lexer_add_word(lexer, word);
                 word = malloc(sizeof(char));
+                malloc_check(lexer, "malloc(word) in function lexer_create");
                 word_size = 0;
                 word_alloc = 1;
              }
@@ -106,6 +123,7 @@ lexer_t *lexer_create(char *program) {
         if (word_size >= word_alloc) {
             word_alloc *= 2;
             word = realloc(word, sizeof(char) *word_alloc);
+            malloc_check(lexer, "realloc(word) in function lexer_create");
         }
         word[word_size - 1] = program[i];
     }
@@ -117,6 +135,8 @@ int lexer_advance(lexer_t *lexer) {
     if (lexer->idx >= lexer->word_size) return 0;
     if (strcmp(lexer->word_list[lexer->idx], "+") == 0) {
         token_update(lexer->cur_token, TKN_PLUS, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "-") == 0) {
+        token_update(lexer->cur_token, TKN_MINUS, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "print") == 0) {
         token_update(lexer->cur_token, TKN_PRINT, NULL);
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
@@ -134,6 +154,10 @@ int lexer_advance(lexer_t *lexer) {
 
 void parse_tokens(lexer_t *lexer) {
     FILE *output = fopen("output.asm", "w");
+    if (output == NULL) {
+        fprintf(stderr, "[ERROR] Failed to create output.asm\n");
+        exit(1);
+    }
     fprintf(output, "BITS 64\n");
     fprintf(output, "segment .text\n");
     fprintf(output, "global _start\n");
@@ -183,6 +207,13 @@ void parse_tokens(lexer_t *lexer) {
             fprintf(output, "   add rbx,rax\n");
             fprintf(output, "   push rbx\n");
             break;
+        case TKN_MINUS:
+            fprintf(output, ";  add int\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   sub rbx,rax\n");
+            fprintf(output, "   push rbx\n");
+            break;
         case TKN_PRINT:
             fprintf(output, ";  print int\n");
             fprintf(output, "   pop rax\n");
@@ -209,12 +240,29 @@ void lexer_destroy(lexer_t *lexer) {
     free(lexer);
 }
 
+static char *make_program(int argc, char **argv) {
+    if (argc != 2) {
+        fprintf(stderr, "[ERROR] File not provided\n[INFO] ssol needs one parameter, the .ssol file\n");
+        exit(1);
+    }
+    FILE *f = fopen(argv[1], "r");
+    if (f == NULL) {
+        fprintf(stderr, "[ERROR] File '%s' dont exists\n", argv[1]);
+        exit(1);
+    }
+    fseek(f, 0, SEEK_END);
+    size_t prog_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *program = malloc(prog_size);
+    malloc_check(program, "malloc(program) in function make_program");
+    fread(program, 1, prog_size, f);
+    fclose(f);
+    return program;
+}
+
 int main(int argc, char **argv) {
-    lexer_t *lexer = lexer_create(
-            "10 print\n"
-            "20 print\n"
-            "10 20 + print\n"
-        );
+    char *program = make_program(argc, argv);
+    lexer_t *lexer = lexer_create(program);
     parse_tokens(lexer);
     lexer_destroy(lexer);
     return 0;

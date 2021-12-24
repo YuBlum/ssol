@@ -11,6 +11,7 @@ typedef struct {
         TKN_ID,
         TKN_INT,
         TKN_PLUS,
+        TKN_MINUS,
         TKN_PRINT,
         TKN_COUNT
     } type;
