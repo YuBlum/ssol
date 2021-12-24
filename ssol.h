@@ -12,6 +12,9 @@ typedef struct {
         TKN_INT,
         TKN_PLUS,
         TKN_MINUS,
+        TKN_MUL,
+        TKN_DIV,
+        TKN_MOD,
         TKN_PRINT,
         TKN_COUNT
     } type;

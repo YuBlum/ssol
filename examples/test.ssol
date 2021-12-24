@@ -1,2 +1,5 @@
-30 32 + print
-32 30 - print
+34 35 + print
+500 80 - print
+34710 2 * print
+126207 3 / print
+69 10 % print

@@ -5,7 +5,10 @@ static char token_name[TKN_COUNT][256] = {
     "TKN_INT",
     "TKN_PLUS",
     "TKN_MINUS",
-    "TKN_PRINT"
+    "TKN_MUL",
+    "TKN_DIV",
+    "TKN_MOD",
+   "TKN_PRINT"
 };
 
 static void malloc_check(void *block, char *info) {
@@ -137,6 +140,12 @@ int lexer_advance(lexer_t *lexer) {
         token_update(lexer->cur_token, TKN_PLUS, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "-") == 0) {
         token_update(lexer->cur_token, TKN_MINUS, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "*") == 0) {
+        token_update(lexer->cur_token, TKN_MUL, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "/") == 0) {
+        token_update(lexer->cur_token, TKN_DIV, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "%") == 0) {
+        token_update(lexer->cur_token, TKN_MOD, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "print") == 0) {
         token_update(lexer->cur_token, TKN_PRINT, NULL);
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
@@ -145,8 +154,8 @@ int lexer_advance(lexer_t *lexer) {
         token_update(lexer->cur_token, -1, NULL);
     }
 
-    if (lexer->cur_token->type != -1)
-        print_token(lexer->cur_token);
+//    if (lexer->cur_token->type != -1)
+//        print_token(lexer->cur_token);
  
     lexer->idx++;
     return 1;
@@ -208,11 +217,34 @@ void parse_tokens(lexer_t *lexer) {
             fprintf(output, "   push rbx\n");
             break;
         case TKN_MINUS:
-            fprintf(output, ";  add int\n");
+            fprintf(output, ";  sub int\n");
             fprintf(output, "   pop rax\n");
             fprintf(output, "   pop rbx\n");
             fprintf(output, "   sub rbx,rax\n");
             fprintf(output, "   push rbx\n");
+            break;
+        case TKN_MUL:
+            fprintf(output, ";  mul int\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   mul rbx\n");
+            fprintf(output, "   push rax\n");
+            break;
+        case TKN_DIV:
+            fprintf(output, ";  div int\n");
+            fprintf(output, "   xor rdx,rdx\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   div rbx\n");
+            fprintf(output, "   push rax\n");
+            break;
+        case TKN_MOD:
+            fprintf(output, ";  div int\n");
+            fprintf(output, "   xor rdx,rdx\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   div rbx\n");
+            fprintf(output, "   push rdx\n");
             break;
         case TKN_PRINT:
             fprintf(output, ";  print int\n");
