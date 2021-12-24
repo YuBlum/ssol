@@ -10,10 +10,10 @@ Em outras linguagens de programação quando você quer somar dois numeros você
 print(10 + 20)
 ```
 
-Já em Simple SOL você precisa somente colocar os números no stack e dar print neles. Para colocar um número é só digita-lo. Por exemplo:
+Já em Simple SOL você precisa somente colocar os números no stack e somar eles. Para colocar um número é só digita-lo. Por exemplo:
 
 ```ssol
 10 20 + print
 ```
 
-O programa acima coloca o número 10 no stack, depois o número 20, remove eles do stack, coloca o resultado da soma e da print no número.
+O programa acima coloca o número 10 e 20 no stack, soma, remove os numeros anteriores e coloca o resultado no stack, após isso ele da print no resultado.
