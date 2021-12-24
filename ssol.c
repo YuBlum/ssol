@@ -80,6 +80,7 @@ lexer_t *lexer_create(char *program) {
     lexer_t *lexer = malloc(sizeof(lexer_t));
 
     lexer->cur_token = token_create();
+    lexer->idx = 0;
 
     lexer->word_list = malloc(sizeof(char *));
     lexer->word_size = 0;
@@ -109,21 +110,94 @@ lexer_t *lexer_create(char *program) {
         word[word_size - 1] = program[i];
     }
 
-    for (size_t i = 0; i < lexer->word_size; i++) {
-        if (strcmp(lexer->word_list[i], "+") == 0) {
-            token_update(lexer->cur_token, TKN_PLUS, NULL);
-        } else if (strcmp(lexer->word_list[i], "print") == 0) {
-            token_update(lexer->cur_token, TKN_PRINT, NULL);
-        } else if (word_is_int(lexer->word_list[i])) {
-            token_update(lexer->cur_token, TKN_INT, lexer->word_list[i]);
-        } else {
-            token_update(lexer->cur_token, -1, NULL);
-        }
-
-        if (lexer->cur_token->type != -1)
-            print_token(lexer->cur_token);
-    }
     return lexer;
+}
+
+int lexer_advance(lexer_t *lexer) {
+    if (lexer->idx >= lexer->word_size) return 0;
+    if (strcmp(lexer->word_list[lexer->idx], "+") == 0) {
+        token_update(lexer->cur_token, TKN_PLUS, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "print") == 0) {
+        token_update(lexer->cur_token, TKN_PRINT, NULL);
+    } else if (word_is_int(lexer->word_list[lexer->idx])) {
+        token_update(lexer->cur_token, TKN_INT, lexer->word_list[lexer->idx]);
+    } else {
+        token_update(lexer->cur_token, -1, NULL);
+    }
+
+    if (lexer->cur_token->type != -1)
+        print_token(lexer->cur_token);
+ 
+    lexer->idx++;
+    return 1;
+}
+
+void parse_tokens(lexer_t *lexer) {
+    FILE *output = fopen("output.asm", "w");
+    fprintf(output, "BITS 64\n");
+    fprintf(output, "segment .text\n");
+    fprintf(output, "global _start\n");
+    fprintf(output, "_print:\n");
+    fprintf(output, "    mov rsi,rsp\n");
+    fprintf(output, "    sub rsp,32\n");
+    fprintf(output, "    mov r9,1\n");
+    fprintf(output, "    add rsi,31\n");
+    fprintf(output, "    mov byte [rsi],0xa\n");
+    fprintf(output, "    mov r10,10\n");
+    fprintf(output, "    cmp rax,0\n");
+    fprintf(output, "    je _IF0printJMP\n");
+    fprintf(output, "_LOOPprintJMP:\n");
+    fprintf(output, "    xor rdx,rdx\n");
+    fprintf(output, "    div r10\n");
+    fprintf(output, "    dec rsi\n");
+    fprintf(output, "    inc r9\n");
+    fprintf(output, "    add rdx,'0'\n");
+    fprintf(output, "    mov [rsi],dl\n");
+    fprintf(output, "    cmp rax,0\n");
+    fprintf(output, "    jne _LOOPprintJMP ; loop\n");
+    fprintf(output, "    jmp _printENDjmp\n");
+    fprintf(output, "_IF0printJMP:\n");
+    fprintf(output, "    dec rsi\n");
+    fprintf(output, "    inc r9\n");
+    fprintf(output, "    mov rdx,'0'\n");
+    fprintf(output, "    mov [rsi],dl\n");
+    fprintf(output, "_printENDjmp:\n");
+    fprintf(output, "    mov rax,1\n");
+    fprintf(output, "    mov rdi,1\n");
+    fprintf(output, "    mov rdx,r9\n");
+    fprintf(output, "    syscall\n");
+    fprintf(output, "    add rsp,32\n");
+    fprintf(output, "    ret\n");
+
+    fprintf(output, "_start:\n");
+    while (lexer_advance(lexer)) {
+        switch (lexer->cur_token->type) {
+        case TKN_INT:
+            fprintf(output, ";  push int\n");
+            fprintf(output, "   push %s\n", lexer->cur_token->val);
+            break;
+        case TKN_PLUS:
+            fprintf(output, ";  add int\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   add rbx,rax\n");
+            fprintf(output, "   push rbx\n");
+            break;
+        case TKN_PRINT:
+            fprintf(output, ";  print int\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   call _print\n");
+        default:
+            break;
+        }
+    }
+    fprintf(output, ";  exit program\n");
+    fprintf(output, "   mov rax,60\n");
+    fprintf(output, "   mov rdi,0\n");
+    fprintf(output, "   syscall\n");
+    fclose(output);
+    system("nasm -felf64 output.asm -o output.o");
+    system("ld -o output output.o");
 }
 
 void lexer_destroy(lexer_t *lexer) {
@@ -141,6 +215,8 @@ int main(int argc, char **argv) {
             "20 print\n"
             "10 20 + print\n"
         );
+    parse_tokens(lexer);
     lexer_destroy(lexer);
     return 0;
 }
+

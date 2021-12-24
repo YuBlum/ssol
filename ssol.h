@@ -28,6 +28,7 @@ typedef struct {
     size_t word_alloc;
 
     token_t *cur_token;
+    size_t idx;
 } lexer_t;
 
 lexer_t *lexer_create(char *program);
