@@ -1,6 +1,49 @@
-#include "ssol.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-static char token_name[TKN_COUNT][256] = {
+typedef struct {
+    char *file;
+    size_t line;
+    size_t col;
+} pos_t;
+
+typedef struct {
+    enum {
+        TKN_ID,
+        TKN_INT,
+        TKN_PLUS,
+        TKN_MINUS,
+        TKN_MUL,
+        TKN_DIV,
+        TKN_MOD,
+        TKN_PRINT,
+        TKN_EQUALS,
+        TKN_IF,
+        TKN_DO,
+        TKN_END,
+        TKN_COUNT
+    } type;
+    char *val;
+    size_t jmp;
+} token_t;
+
+typedef struct {
+    char **word_list;
+    pos_t **pos_list;
+    size_t word_size;
+    size_t word_alloc;
+
+    int error;
+    
+    token_t *cur_token;
+    size_t idx;
+    int condition;
+} lexer_t;
+
+
+
+char token_name[TKN_COUNT][256] = {
     "TKN_ID",
     "TKN_INT",
     "TKN_PLUS",
@@ -11,11 +54,26 @@ static char token_name[TKN_COUNT][256] = {
    "TKN_PRINT"
 };
 
-static void malloc_check(void *block, char *info) {
+void malloc_check(void *block, char *info) {
     if (block == NULL) {
         fprintf(stderr, "[ERROR] malloc returned null\n[INFO] %s\n", info);
         exit(1);
     }
+}
+
+pos_t *pos_create(char *file, size_t line, size_t col) {
+    pos_t *pos = malloc(sizeof(pos_t));
+    malloc_check(pos, "in function pos_create");
+    pos->file = malloc(strlen(file) + 1);
+    strcpy(pos->file, file);
+    pos->line = line;
+    pos->col = col;
+    return pos;
+}
+
+void pos_destroy(pos_t *pos) {
+    free(pos->file);
+    free(pos);
 }
 
 token_t *token_create() {
@@ -54,7 +112,7 @@ void token_destroy(token_t *token) {
     free(token);
 }
 
-static void print_token(token_t *token) {
+void print_token(token_t *token) {
     if (token->val != NULL) {
         printf("[%s, %s]\n", token_name[token->type], token->val);
     } else {
@@ -62,17 +120,19 @@ static void print_token(token_t *token) {
     }
 }
 
-static void lexer_add_word(lexer_t *lexer, char *word) {
+void lexer_add_word(lexer_t *lexer, char *word, pos_t *pos) {
     lexer->word_size++;
     if (lexer->word_size >= lexer->word_alloc) {
         lexer->word_alloc *= 2;
         lexer->word_list = realloc(lexer->word_list, sizeof(char *) *lexer->word_alloc);
+        lexer->pos_list = realloc(lexer->pos_list, sizeof(pos_t *) *lexer->word_alloc);
     }
 
     lexer->word_list[lexer->word_size - 1] = word;
+    lexer->pos_list[lexer->word_size - 1]  = pos;
 }
 
-static int word_is_int(char *word) {
+int word_is_int(char *word) {
     int result = 1;
     size_t len = strlen(word);
     for (size_t i = 0; i < len; i++) {
@@ -92,7 +152,7 @@ static int word_is_int(char *word) {
     return result;
 }
 
-lexer_t *lexer_create(char *program) {
+lexer_t *lexer_create(char *program, char *file) {
     lexer_t *lexer = malloc(sizeof(lexer_t));
     malloc_check(lexer, "malloc(lexer) in function lexer_create");
 
@@ -101,25 +161,39 @@ lexer_t *lexer_create(char *program) {
 
     lexer->word_list = malloc(sizeof(char *));
     malloc_check(lexer, "malloc(lexer->word_list) in function lexer_create");
+    lexer->pos_list = malloc(sizeof(pos_t *));
+    malloc_check(lexer, "malloc(lexer->pos_list) in function lexer_create");
     lexer->word_size = 0;
     lexer->word_alloc = 1;
+
     lexer->condition = 0;
+    lexer->error = 0;
 
     char *word = malloc(sizeof(char));
     malloc_check(lexer, "malloc(word) in function lexer_create");
     size_t word_size = 0;
     size_t word_alloc = 1;
+    
+    size_t line = 1;
+    size_t col = 1;
+    size_t col_word = 1;
 
     for (size_t i = 0; program[i] != 0; i++) {
+        col++;
         if (program[i] == ' ' || program[i] == '\t' || program[i] == '\n') {
-
             if (word_size > 0) {
                 word[word_size] = '\0';
-                lexer_add_word(lexer, word);
+                lexer_add_word(lexer, word, pos_create(file, line, col_word));
                 word = malloc(sizeof(char));
                 malloc_check(lexer, "malloc(word) in function lexer_create");
                 word_size = 0;
                 word_alloc = 1;
+             }
+             if (program[i] == '\n') {
+                line++;
+                col = col_word = 1;
+             } else {
+                col_word = col;
              }
              continue;
         }
@@ -133,6 +207,11 @@ lexer_t *lexer_create(char *program) {
     }
 
     return lexer;
+}
+
+void lexer_error(lexer_t *lexer, char *msg, pos_t *pos) {
+    fprintf(stderr, "[ERROR] (%s:%ld:%ld) %s\n", pos->file, pos->line, pos->col, msg);
+    lexer->error = 1;
 }
 
 int lexer_advance(lexer_t *lexer) {
@@ -167,15 +246,15 @@ int lexer_advance(lexer_t *lexer) {
                 }
             }
             if (jmp == 0) {
-                // TODO: error if without a end
-                exit(1);
+                lexer_error(lexer, "if without a end", lexer->pos_list[lexer->idx]);
+                return 0;
             }
             token_update(lexer->cur_token, TKN_DO, NULL);
             lexer->cur_token->jmp = jmp;
             lexer->condition = 0;
         } else {
-            // TODO: error do without if
-            exit(1);
+            lexer_error(lexer, "do without a if", lexer->pos_list[lexer->idx]);
+            return 0;
         }
     } else if (strcmp(lexer->word_list[lexer->idx], "if") == 0) {
         token_update(lexer->cur_token, TKN_IF, NULL);
@@ -185,7 +264,11 @@ int lexer_advance(lexer_t *lexer) {
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
         token_update(lexer->cur_token, TKN_INT, lexer->word_list[lexer->idx]);
     } else {
-        token_update(lexer->cur_token, -1, NULL);
+        char *msg = malloc(strlen(lexer->word_list[lexer->idx]) + 32);
+        sprintf(msg, "undefined word '%s'", lexer->word_list[lexer->idx]);
+        lexer_error(lexer, msg, lexer->pos_list[lexer->idx]);
+        free(msg);
+        return 0;
     }
 
 //    if (lexer->cur_token->type != -1)
@@ -308,6 +391,9 @@ void parse_tokens(lexer_t *lexer) {
             break;
         }
     }
+    if (lexer->error) {
+        exit(1);
+    }
     fprintf(output, ";  exit program\n");
     fprintf(output, "   mov rax,60\n");
     fprintf(output, "   mov rdi,0\n");
@@ -320,13 +406,15 @@ void parse_tokens(lexer_t *lexer) {
 void lexer_destroy(lexer_t *lexer) {
     token_destroy(lexer->cur_token);
     for (size_t i = 0; i < lexer->word_size; i++) {
+        pos_destroy(lexer->pos_list[i]);
         free(lexer->word_list[i]);
     }
     free (lexer->word_list);
+    free (lexer->pos_list);
     free(lexer);
 }
 
-static char *make_program(int argc, char **argv) {
+char *make_program(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "[ERROR] File not provided\n[INFO] ssol needs one parameter, the .ssol file\n");
         exit(1);
@@ -348,7 +436,7 @@ static char *make_program(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     char *program = make_program(argc, argv);
-    lexer_t *lexer = lexer_create(program);
+    lexer_t *lexer = lexer_create(program, argv[1]);
     parse_tokens(lexer);
     lexer_destroy(lexer);
     return 0;
