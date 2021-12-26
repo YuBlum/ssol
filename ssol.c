@@ -103,6 +103,7 @@ lexer_t *lexer_create(char *program) {
     malloc_check(lexer, "malloc(lexer->word_list) in function lexer_create");
     lexer->word_size = 0;
     lexer->word_alloc = 1;
+    lexer->condition = 0;
 
     char *word = malloc(sizeof(char));
     malloc_check(lexer, "malloc(word) in function lexer_create");
@@ -146,8 +147,41 @@ int lexer_advance(lexer_t *lexer) {
         token_update(lexer->cur_token, TKN_DIV, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "%") == 0) {
         token_update(lexer->cur_token, TKN_MOD, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "=") == 0) {
+        token_update(lexer->cur_token, TKN_EQUALS, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "print") == 0) {
         token_update(lexer->cur_token, TKN_PRINT, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "do") == 0) {
+        if (lexer->condition) {
+            size_t jmp = 0;
+            size_t if_count = 0;
+            for (size_t i = lexer->idx + 1; i < lexer->word_size; i++) {
+                if (strcmp(lexer->word_list[i], "if") == 0) if_count++;
+                if (strcmp(lexer->word_list[i], "end") == 0) {
+                    if (if_count > 0) {
+                        if_count--;
+                    } else {
+                        jmp = i;
+                        break;
+                    }
+                }
+            }
+            if (jmp == 0) {
+                // TODO: error if without a end
+                exit(1);
+            }
+            token_update(lexer->cur_token, TKN_DO, NULL);
+            lexer->cur_token->jmp = jmp;
+            lexer->condition = 0;
+        } else {
+            // TODO: error do without if
+            exit(1);
+        }
+    } else if (strcmp(lexer->word_list[lexer->idx], "if") == 0) {
+        token_update(lexer->cur_token, TKN_IF, NULL);
+        lexer->condition = 1;
+    } else if (strcmp(lexer->word_list[lexer->idx], "end") == 0) {
+        token_update(lexer->cur_token, TKN_END, NULL);
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
         token_update(lexer->cur_token, TKN_INT, lexer->word_list[lexer->idx]);
     } else {
@@ -250,6 +284,26 @@ void parse_tokens(lexer_t *lexer) {
             fprintf(output, ";  print int\n");
             fprintf(output, "   pop rax\n");
             fprintf(output, "   call _print\n");
+            break;
+        case TKN_EQUALS:
+            fprintf(output, ";  equals\n");
+            fprintf(output, "   mov rcx,0\n");
+            fprintf(output, "   mov rdx,1\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   pop rbx\n");
+            fprintf(output, "   cmp rax,rbx\n");
+            fprintf(output, "   cmove rcx,rdx\n");
+            fprintf(output, "   push rcx\n");
+            break;
+        case TKN_DO:
+            fprintf(output, ";  do\n");
+            fprintf(output, "   pop rax\n");
+            fprintf(output, "   test rax,rax\n");
+            fprintf(output, "   jz ADR%ld\n", lexer->cur_token->jmp);
+            break;
+        case TKN_END:
+            fprintf(output, ";  end\n");
+            fprintf(output, "ADR%ld:\n", lexer->idx - 1);
         default:
             break;
         }

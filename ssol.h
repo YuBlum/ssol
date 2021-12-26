@@ -16,9 +16,14 @@ typedef struct {
         TKN_DIV,
         TKN_MOD,
         TKN_PRINT,
+        TKN_EQUALS,
+        TKN_IF,
+        TKN_DO,
+        TKN_END,
         TKN_COUNT
     } type;
     char *val;
+    size_t jmp;
 } token_t;
 
 token_t *token_create();
@@ -33,6 +38,7 @@ typedef struct {
 
     token_t *cur_token;
     size_t idx;
+    int condition;
 } lexer_t;
 
 lexer_t *lexer_create(char *program);

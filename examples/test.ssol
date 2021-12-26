@@ -1,2 +1,7 @@
-34 35 + print
-29 2 * print
+if 34 35 + 69 = do
+    if 500 80 - 420 = do
+        420 print
+    end
+    69 print
+end
+
