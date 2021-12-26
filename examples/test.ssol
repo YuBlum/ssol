@@ -1,7 +1,5 @@
-if 3 3 + 7 = do
-    7 print
-else if 3 3 + 6 = do
-    6 print
+if 10 12 > do
+    1 print
 else
-    76 print
+    0 print
 end
