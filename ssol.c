@@ -21,6 +21,7 @@ typedef struct {
         TKN_EQUALS,
         TKN_IF,
         TKN_DO,
+        TKN_ELSE,
         TKN_END,
         TKN_COUNT
     } type;
@@ -244,6 +245,12 @@ int lexer_advance(lexer_t *lexer) {
                         break;
                     }
                 }
+                if (strcmp(lexer->word_list[i], "else") == 0) {
+                    if (if_count == 0) {
+                        jmp = i;
+                        break;
+                    }
+                }
             }
             if (jmp == 0) {
                 lexer_error(lexer, "if without a end", lexer->pos_list[lexer->idx]);
@@ -259,6 +266,26 @@ int lexer_advance(lexer_t *lexer) {
     } else if (strcmp(lexer->word_list[lexer->idx], "if") == 0) {
         token_update(lexer->cur_token, TKN_IF, NULL);
         lexer->condition = 1;
+    } else if (strcmp(lexer->word_list[lexer->idx], "else") == 0) {
+        size_t jmp = 0;
+        size_t if_count = 0;
+        for (size_t i = lexer->idx + 1; i < lexer->word_size; i++) {
+            if (strcmp(lexer->word_list[i], "if") == 0 && lexer->idx > lexer->idx + 1) if_count++;
+            if (strcmp(lexer->word_list[i], "end") == 0) {
+                if (if_count > 0) {
+                    if_count--;
+                } else {
+                    jmp = i;
+                    break;
+                }
+            }
+        }
+        if (jmp == 0) {
+            lexer_error(lexer, "else without a end", lexer->pos_list[lexer->idx]);
+            return 0;
+        }
+        token_update(lexer->cur_token, TKN_ELSE, NULL);
+        lexer->cur_token->jmp = jmp;
     } else if (strcmp(lexer->word_list[lexer->idx], "end") == 0) {
         token_update(lexer->cur_token, TKN_END, NULL);
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
@@ -383,6 +410,11 @@ void parse_tokens(lexer_t *lexer) {
             fprintf(output, "   pop rax\n");
             fprintf(output, "   test rax,rax\n");
             fprintf(output, "   jz ADR%ld\n", lexer->cur_token->jmp);
+            break;
+        case TKN_ELSE:
+            fprintf(output, ";  else\n");
+            fprintf(output, "   jmp ADR%ld\n", lexer->cur_token->jmp);
+            fprintf(output, "ADR%ld:\n", lexer->idx - 1);
             break;
         case TKN_END:
             fprintf(output, ";  end\n");

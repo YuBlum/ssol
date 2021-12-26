@@ -1,6 +1,7 @@
-if 1 do
-    69 print
-end
-if 0 do
-    420 print
+if 3 3 + 7 = do
+    7 print
+else if 3 3 + 6 = do
+    6 print
+else
+    76 print
 end

@@ -1,0 +1,9 @@
+if 0 do
+    1 print
+else if 0 do
+    2 print
+else if 0 do
+    3 print
+else if 0 do
+    4 print
+end
