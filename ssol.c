@@ -18,6 +18,8 @@ typedef struct {
         TKN_DIV,
         TKN_MOD,
         TKN_PRINT,
+        TKN_DUP,
+        TKN_DROP,
         TKN_EQUALS,
         TKN_NOTEQUALS,
         TKN_GREATER,
@@ -49,6 +51,7 @@ typedef struct {
     token_t *cur_token;
     size_t idx;
     int condition;
+    int loop;
 } lexer_t;
 
 char token_name[TKN_COUNT][256] = {
@@ -175,6 +178,7 @@ lexer_t *lexer_create(char *program, char *file) {
     lexer->word_alloc = 1;
 
     lexer->condition = 0;
+    lexer->loop = 0;
     lexer->error = 0;
 
     char *word = malloc(sizeof(char));
@@ -250,12 +254,16 @@ int lexer_advance(lexer_t *lexer) {
         token_update(lexer->cur_token, TKN_NOT, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "print") == 0) {
         token_update(lexer->cur_token, TKN_PRINT, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "dup") == 0) {
+        token_update(lexer->cur_token, TKN_DUP, NULL);
+    } else if (strcmp(lexer->word_list[lexer->idx], "drop") == 0) {
+        token_update(lexer->cur_token, TKN_DROP, NULL);
     } else if (strcmp(lexer->word_list[lexer->idx], "do") == 0) {
         if (lexer->condition) {
             size_t jmp = 0;
             size_t if_count = 0;
             for (size_t i = lexer->idx + 1; i < lexer->word_size; i++) {
-                if (strcmp(lexer->word_list[i], "if") == 0) if_count++;
+                if (strcmp(lexer->word_list[i], "if") == 0 && strcmp(lexer->word_list[i - 1], "else") != 0) if_count++;
                 if (strcmp(lexer->word_list[i], "end") == 0) {
                     if (if_count > 0) {
                         if_count--;
@@ -272,24 +280,32 @@ int lexer_advance(lexer_t *lexer) {
                 }
             }
             if (jmp == 0) {
-                lexer_error(lexer, "if without a end", lexer->pos_list[lexer->idx]);
+                if (lexer->loop)
+                    lexer_error(lexer, "loop without a end", lexer->pos_list[lexer->idx]);
+                else
+                    lexer_error(lexer, "if without a end", lexer->pos_list[lexer->idx]);
                 return 0;
             }
             token_update(lexer->cur_token, TKN_DO, NULL);
             lexer->cur_token->jmp = jmp;
             lexer->condition = 0;
+            lexer->loop = 0;
         } else {
-            lexer_error(lexer, "do without a if", lexer->pos_list[lexer->idx]);
+            lexer_error(lexer, "do without a if or loop", lexer->pos_list[lexer->idx]);
             return 0;
         }
     } else if (strcmp(lexer->word_list[lexer->idx], "if") == 0) {
         token_update(lexer->cur_token, TKN_IF, NULL);
         lexer->condition = 1;
+        if (strcmp(lexer->word_list[lexer->idx + 1], "do") == 0) {
+            lexer_error(lexer, "if condition can't be empty", lexer->pos_list[lexer->idx]);
+            return 0;
+        }
     } else if (strcmp(lexer->word_list[lexer->idx], "else") == 0) {
         size_t jmp = 0;
         size_t if_count = 0;
         for (size_t i = lexer->idx + 1; i < lexer->word_size; i++) {
-            if (strcmp(lexer->word_list[i], "if") == 0 && lexer->idx > lexer->idx + 1) if_count++;
+            if (strcmp(lexer->word_list[i], "if") == 0 && i > lexer->idx + 1) if_count++;
             if (strcmp(lexer->word_list[i], "end") == 0) {
                 if (if_count > 0) {
                     if_count--;
@@ -299,6 +315,23 @@ int lexer_advance(lexer_t *lexer) {
                 }
             }
         }
+        int found_if = 0;
+        for (size_t i = lexer->idx - 1; i >= 0; i--) {
+            if ((int)i < 0) break;
+            if (strcmp(lexer->word_list[i], "end") == 0) if_count++;
+            if (strcmp(lexer->word_list[i], "if") == 0 && (i == 0 || strcmp(lexer->word_list[i - 1], "else") != 0)) {
+                if (if_count > 0) {
+                    if_count--;
+                } else {
+                    found_if = 1;
+                    break;
+                }
+            }
+        }
+        if (!found_if) {
+            lexer_error(lexer, "else without a if", lexer->pos_list[lexer->idx]);
+            return 0;
+        }
         if (jmp == 0) {
             lexer_error(lexer, "else without a end", lexer->pos_list[lexer->idx]);
             return 0;
@@ -307,8 +340,36 @@ int lexer_advance(lexer_t *lexer) {
         lexer->cur_token->jmp = jmp;
     } else if (strcmp(lexer->word_list[lexer->idx], "loop") == 0) {
         token_update(lexer->cur_token, TKN_LOOP, NULL);
+        lexer->condition = 1;
+        lexer->loop = 1;
+        if (strcmp(lexer->word_list[lexer->idx + 1], "do") == 0) {
+            lexer_error(lexer, "loop condition can't be empty", lexer->pos_list[lexer->idx]);
+            return 0;
+        }
     } else if (strcmp(lexer->word_list[lexer->idx], "end") == 0) {
+        size_t end_count = 0;
+        int found_open = 0;
         token_update(lexer->cur_token, TKN_END, NULL);
+        for (int i = lexer->idx - 1; i > -1; i--) {
+            if (lexer->idx == 0) break;
+            if (strcmp(lexer->word_list[i], "end") == 0) end_count++;
+            if (strcmp(lexer->word_list[i], "if") == 0 || strcmp(lexer->word_list[i], "loop") == 0) {
+                if (end_count > 0) {
+                    end_count--;
+                } else {
+                    found_open = 1;
+                    if (strcmp(lexer->word_list[i], "loop") == 0) {
+                        lexer->loop = 1;
+                        lexer->cur_token->jmp = i;
+                    }
+                    break;
+                }
+            }
+        }
+        if (!found_open) {
+            lexer_error(lexer, "end without a if or a loop", lexer->pos_list[lexer->idx]);
+            return 0;
+        }
     } else if (word_is_int(lexer->word_list[lexer->idx])) {
         token_update(lexer->cur_token, TKN_INT, lexer->word_list[lexer->idx]);
     } else {
@@ -371,128 +432,144 @@ void parse_tokens(lexer_t *lexer) {
     while (lexer_advance(lexer)) {
         switch (lexer->cur_token->type) {
         case TKN_INT:
-            fprintf(output, ";  push int\n");
-            fprintf(output, "   push %s\n", lexer->cur_token->val);
+            fprintf(output, ";   push int\n");
+            fprintf(output, "    push %s\n", lexer->cur_token->val);
             break;
         case TKN_PLUS:
-            fprintf(output, ";  add int\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   add rbx,rax\n");
-            fprintf(output, "   push rbx\n");
+            fprintf(output, ";   add int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    add rbx,rax\n");
+            fprintf(output, "    push rbx\n");
             break;
         case TKN_MINUS:
-            fprintf(output, ";  sub int\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   sub rbx,rax\n");
-            fprintf(output, "   push rbx\n");
+            fprintf(output, ";   sub int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    sub rbx,rax\n");
+            fprintf(output, "    push rbx\n");
             break;
         case TKN_MUL:
-            fprintf(output, ";  mul int\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   mul rbx\n");
-            fprintf(output, "   push rax\n");
+            fprintf(output, ";   mul int\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    mul rbx\n");
+            fprintf(output, "    push rax\n");
             break;
         case TKN_DIV:
-            fprintf(output, ";  div int\n");
-            fprintf(output, "   xor rdx,rdx\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   div rbx\n");
-            fprintf(output, "   push rax\n");
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    xor rdx,rdx\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    div rbx\n");
+            fprintf(output, "    push rax\n");
             break;
         case TKN_MOD:
-            fprintf(output, ";  div int\n");
-            fprintf(output, "   xor rdx,rdx\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   div rbx\n");
-            fprintf(output, "   push rdx\n");
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    xor rdx,rdx\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    div rbx\n");
+            fprintf(output, "    push rdx\n");
             break;
         case TKN_PRINT:
-            fprintf(output, ";  print int\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   call _print\n");
+            fprintf(output, ";   print int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    call _print\n");
+            break;
+        case TKN_DUP:
+            fprintf(output, ";   dup\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    push rax\n");
+            fprintf(output, "    push rax\n");
+            break;
+        case TKN_DROP:
+            fprintf(output, ";   drop\n");
+            fprintf(output, "    pop rax\n");
             break;
         case TKN_EQUALS:
-            fprintf(output, ";  equals\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmove rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   equals\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmove rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_GREATER:
-            fprintf(output, ";  greater\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmovg rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   greater\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmovg rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_MINOR:
-            fprintf(output, ";  minor\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmovl rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   minor\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmovl rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_EQGREATER:
-            fprintf(output, ";  eqgreater\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmovge rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   eqgreater\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmovge rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_EQMINOR:
-            fprintf(output, ";  eqminor\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmovle rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   eqminor\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmovle rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_NOTEQUALS:
-            fprintf(output, ";  not\n");
-            fprintf(output, "   mov rcx,0\n");
-            fprintf(output, "   mov rdx,1\n");
-            fprintf(output, "   pop rbx\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   cmp rax,rbx\n");
-            fprintf(output, "   cmovne rcx,rdx\n");
-            fprintf(output, "   push rcx\n");
+            fprintf(output, ";   not\n");
+            fprintf(output, "    mov rcx,0\n");
+            fprintf(output, "    mov rdx,1\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    cmp rax,rbx\n");
+            fprintf(output, "    cmovne rcx,rdx\n");
+            fprintf(output, "    push rcx\n");
             break;
         case TKN_DO:
-            fprintf(output, ";  do\n");
-            fprintf(output, "   pop rax\n");
-            fprintf(output, "   test rax,rax\n");
-            fprintf(output, "   jz ADR%ld\n", lexer->cur_token->jmp);
+            fprintf(output, ";   do\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    test rax,rax\n");
+            fprintf(output, "    jz ADR%ld\n", lexer->cur_token->jmp);
             break;
         case TKN_ELSE:
-            fprintf(output, ";  else\n");
-            fprintf(output, "   jmp ADR%ld\n", lexer->cur_token->jmp);
+            fprintf(output, ";   else\n");
+            fprintf(output, "    jmp ADR%ld\n", lexer->cur_token->jmp);
             fprintf(output, "ADR%ld:\n", lexer->idx - 1);
             break;
         case TKN_LOOP:
-            fprintf(output, ";  loop\n");
+            fprintf(output, ";   loop\n");
             fprintf(output, "ADR%ld:\n", lexer->idx - 1);
+            break;
         case TKN_END:
-            fprintf(output, ";  end\n");
+            fprintf(output, ";   end\n");
+            if (lexer->loop) {
+                lexer->loop = 0;
+                fprintf(output, "    jmp ADR%ld\n", lexer->cur_token->jmp);
+            }
             fprintf(output, "ADR%ld:\n", lexer->idx - 1);
+            break;
         default:
             break;
         }
