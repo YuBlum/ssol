@@ -3,8 +3,5 @@
         dup print
     end
     1 +
-
-    0 loop dup 10000000 < do
-        1 +
-    end drop
+    0 loop dup 100000000 < do 1 + end drop
 end
