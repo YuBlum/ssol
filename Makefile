@@ -1,2 +1,5 @@
+FLAGS=-g -Wall
+STD=-std=c99
+
 ssol: ssol.c
-	gcc -g -Wall ssol.c -o ssol
+	gcc $(FLAGS) $(STD) ssol.c -o ssol

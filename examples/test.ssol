@@ -1,7 +1,10 @@
-0 loop 1 do
-    if dup 2 % 0 = do
-        dup print
-    end
-    1 +
-    0 loop dup 100000000 < do 1 + end drop
-end
+label a int end 5  = a
+label b int end 10 = b
+label c int end
+
+a b + = c
+
+a print
+b print
+c print
+
