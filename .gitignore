@@ -2,3 +2,5 @@ TODO
 output*
 *.asm
 ssol
+*.sh
+*.out

@@ -2,10 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// label buf byte 100 end
-// byte [10]
-// 0xa0 10 + -> [0xaa] -> resultado
-
 typedef struct {
     char *file;
     size_t line;
@@ -17,7 +13,6 @@ typedef struct {
         TKN_ID,
         TKN_KEYWORD,
         TKN_INTRINSIC,
-        TKN_SYSCALL,
         TKN_INT,
         TKN_TYPE,
         TKN_COUNT
@@ -32,7 +27,9 @@ typedef struct {
         OP_PRINT,
         OP_DUP,
         OP_SWAP,
+        OP_ROT,
         OP_DROP,
+        OP_CAP,
         OP_START_INDEX,
         OP_END_INDEX,
         OP_EQUALS,
@@ -53,6 +50,12 @@ typedef struct {
         //OP_BREAK,
         OP_END,
         OP_SYSCALL0,
+        OP_SYSCALL1,
+        OP_SYSCALL2,
+        OP_SYSCALL3,
+        OP_SYSCALL4,
+        OP_SYSCALL5,
+        OP_SYSCALL6,
         OP_COUNT
     } operation;
     char *val;
@@ -297,14 +300,30 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_DUP, word);
     } else if (strcmp(word, "swap") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SWAP, word);
+    } else if (strcmp(word, "rot") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_ROT, word);
     } else if (strcmp(word, "drop") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_DROP, word);
+    } else if (strcmp(word, "cap") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_CAP, word);
     } else if (strcmp(word, "[") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_START_INDEX, word);
     } else if (strcmp(word, "]") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_END_INDEX, word);
     } else if (strcmp(word, "syscall0") == 0) {
-        token_set(&program.token_list[idx], TKN_SYSCALL, OP_SYSCALL0, word);
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL0, word);
+    } else if (strcmp(word, "syscall1") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL1, word);
+    } else if (strcmp(word, "syscall2") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL2, word);
+    } else if (strcmp(word, "syscall3") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL3, word);
+    } else if (strcmp(word, "syscall4") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL4, word);
+    } else if (strcmp(word, "syscall5") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL5, word);
+    } else if (strcmp(word, "syscall6") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL6, word);
     } else if (strcmp(word, "do") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_DO, word);
     } else if (strcmp(word, "if") == 0) {
@@ -452,11 +471,13 @@ int parse_current_token() {
             }
             char *type = token_list[idx].val;
             // verify if label is an array
+            size_t end = 0;
             stack_t stack = stack_create();
             for (size_t i = idx + 1; i < program.token_size; i++) {
                 int invalid = 0;
                 if (token_list[i].type == TKN_KEYWORD) {
                     if (token_list[i].operation == OP_END) {
+                        end = i + 1;
                         break;
                     } else {
                         invalid = 1;
@@ -505,6 +526,10 @@ int parse_current_token() {
                     return 0;
                 }
             }
+            if (end  == 0) {
+                program_error("creating label without a end", pos_list[idx]);
+                return 0;
+            }
             label_t label;
             if (stack.size == 0) {
                 label = label_create(name, type, 0, 1);
@@ -524,6 +549,7 @@ int parse_current_token() {
                 return 0;
             }
             program_add_label(label);
+            program.idx = end - 1;
         } break;
         case OP_END: {
             size_t end_count = 0;
@@ -630,6 +656,35 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
+            if (program.index) 
+                program.idx_amount--;
+
+        } break;
+        case OP_CAP: {
+            int find = 0;
+            label_t label;
+            if (token_list[idx - 1].type == TKN_ID) {
+                for (size_t i = 0; i < program.label_size; i++) {
+                    if (strcmp(token_list[idx - 1].val, program.label_list[i].name) == 0) {
+                        program.cur_label = i;
+                        find = 1;
+                        label = program.label_list[i];
+                        break;
+                    }
+                }
+            }
+            if (!find) {
+                char *msg = malloc(strlen(token_list[idx - 1].val) + 16);
+                sprintf(msg, "'%s' is not a label", token_list[idx - 1].val);
+                program_error(msg, program.pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+
+            if (!label.arr) {
+                program_error("'cap' can only be used in arrays", program.pos_list[idx]);
+                return 0;
+            }
         }
         case OP_PLUS:
         case OP_MINUS:
@@ -637,6 +692,7 @@ int parse_current_token() {
         case OP_DIV:
         case OP_MOD:
         case OP_DROP:
+        case OP_PRINT:
             if (program.index) 
                 program.idx_amount--;
             break;
@@ -647,6 +703,7 @@ int parse_current_token() {
             }
             break;
         case OP_SWAP:
+        case OP_ROT: // TODO: maybe this not work because rotate might need +2 to the program.idx_amount instead of +1
             if (program.index && program.idx_amount == 0) {
                 program.idx_amount++;
             }
@@ -902,16 +959,84 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    push rax\n");
             fprintf(output, "    push rbx\n");
         } break;
+         case OP_ROT: {
+            fprintf(output, ";   swap\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rcx\n");
+            fprintf(output, "    push rax\n");
+            fprintf(output, "    push rbx\n");
+            fprintf(output, "    push rcx\n");
+        } break;
         case OP_DROP: {
             fprintf(output, ";   drop\n");
             fprintf(output, "    pop rax\n");
         } break;
+        case OP_CAP: {
+            fprintf(output, ";   cap\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    push %lu\n", program.label_list[program.cur_label].cap);
+        } break;
         case OP_SYSCALL0: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL1: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL2: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    pop rsi\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL3: {
             fprintf(output, ";   syscall\n");
             fprintf(output, "    pop rax\n");
             fprintf(output, "    pop rdi\n");
             fprintf(output, "    pop rsi\n");
             fprintf(output, "    pop rdx\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL4: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    pop rsi\n");
+            fprintf(output, "    pop rdx\n");
+            fprintf(output, "    pop r10\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL5: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    pop rsi\n");
+            fprintf(output, "    pop rdx\n");
+            fprintf(output, "    pop r10\n");
+            fprintf(output, "    pop r8\n");
+            fprintf(output, "    syscall\n");
+            fprintf(output, "    push rax\n");
+        } break;
+        case OP_SYSCALL6: {
+            fprintf(output, ";   syscall\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    pop rsi\n");
+            fprintf(output, "    pop rdx\n");
+            fprintf(output, "    pop r10\n");
+            fprintf(output, "    pop r8\n");
+            fprintf(output, "    pop r9\n");
             fprintf(output, "    syscall\n");
             fprintf(output, "    push rax\n");
         } break;
