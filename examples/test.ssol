@@ -1,10 +1,10 @@
-label a int end 5  = a
-label b int end 10 = b
-label c int end
+label arr int 3 end
 
-a b + = c
+2 = arr[0]
+4 = arr[1]
+6 = arr[2]
 
-a print
-b print
-c print
-
+0 loop dup 3 < do
+    dup arr[swap] print
+    1 +
+end
