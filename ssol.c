@@ -49,9 +49,9 @@ typedef struct {
         OP_DO,
         OP_ELSE,
         OP_LOOP,
-        OP_CREATE_LABEL,
-        OP_SET_LABEL,
-        OP_CALL_LABEL,
+        OP_CREATE_VAR,
+        OP_SET_VAR,
+        OP_CALL_VAR,
         //OP_REPEAT,
         //OP_BREAK,
         OP_END,
@@ -72,15 +72,15 @@ typedef struct {
     char *name;
     size_t size_bytes;
     int primitive;
-    // TODO: add member labels to types
-} labeltype_t;
+    // TODO: add member vars to types
+} vartype_t;
 
 typedef struct {
     char *name;
     size_t type;
     int arr;
     size_t cap;
-} label_t;
+} var_t;
 
 typedef struct {
     size_t *stack;
@@ -94,13 +94,13 @@ typedef struct {
     size_t token_size;
     size_t token_alloc;
 
-    labeltype_t *labeltype_list;
-    size_t labeltype_size;
-    size_t labeltype_alloc;
+    vartype_t *vartype_list;
+    size_t vartype_size;
+    size_t vartype_alloc;
 
-    label_t *label_list;
-    size_t label_size;
-    size_t label_alloc;
+    var_t *var_list;
+    size_t var_size;
+    size_t var_alloc;
 
     size_t idx;
     int error;
@@ -109,7 +109,7 @@ typedef struct {
     int setting;
     int index;
     size_t idx_amount;
-    size_t cur_label;
+    size_t cur_var;
 } program_t;
 
 program_t program;
@@ -182,20 +182,20 @@ void print_token(token_t *token) {
     }
 }
 
-labeltype_t labeltype_create(char *name, size_t size_bytes, int primitive) {
-    labeltype_t labeltype;
-    labeltype.name = malloc(sizeof(*labeltype.name) * (strlen(name) + 1));
-    malloc_check(labeltype.name, "malloc(labeltype.name) in function labeltype_create");
-    strcpy(labeltype.name, name);
-    labeltype.size_bytes = size_bytes;
-    labeltype.primitive = primitive;
-    return labeltype;
+vartype_t vartype_create(char *name, size_t size_bytes, int primitive) {
+    vartype_t vartype;
+    vartype.name = malloc(sizeof(*vartype.name) * (strlen(name) + 1));
+    malloc_check(vartype.name, "malloc(vartype.name) in function vartype_create");
+    strcpy(vartype.name, name);
+    vartype.size_bytes = size_bytes;
+    vartype.primitive = primitive;
+    return vartype;
 }
 
-size_t find_labeltype(char *name) {
+size_t find_vartype(char *name) {
     size_t find = 0;
-    for (size_t i = 0; i < program.labeltype_size; i++) {
-        if (strcmp(program.labeltype_list[i].name, name) == 0) {
+    for (size_t i = 0; i < program.vartype_size; i++) {
+        if (strcmp(program.vartype_list[i].name, name) == 0) {
             find = i + 1;
             break;
         }
@@ -203,19 +203,19 @@ size_t find_labeltype(char *name) {
     return find;
 }
 
-label_t label_create(char *name, char *type_name, int arr, size_t cap) {
+var_t var_create(char *name, char *type_name, int arr, size_t cap) {
     size_t type;
-    type = find_labeltype(type_name);
-    if (!type) return (label_t){.name=NULL};
+    type = find_vartype(type_name);
+    if (!type) return (var_t){.name=NULL};
     type--;
-    label_t label;
-    label.name = malloc(sizeof(*label.name) * (strlen(name) + 1));
-    malloc_check(label.name, "malloc(label.name) in function label_create");
-    strcpy(label.name, name);
-    label.type = type;
-    label.arr = arr;
-    label.cap = cap;
-    return label;
+    var_t var;
+    var.name = malloc(sizeof(*var.name) * (strlen(name) + 1));
+    malloc_check(var.name, "malloc(var.name) in function var_create");
+    strcpy(var.name, name);
+    var.type = type;
+    var.arr = arr;
+    var.cap = cap;
+    return var;
 }
 
 void program_add_token(pos_t pos) {
@@ -229,22 +229,22 @@ void program_add_token(pos_t pos) {
     program.pos_list[program.token_size - 1] = pos;
 }
 
-void program_add_labeltype(labeltype_t labeltype) {
-    program.labeltype_size++;
-    if (program.labeltype_size >= program.labeltype_alloc) {
-        program.labeltype_alloc *= 2;
-        program.labeltype_list = realloc(program.labeltype_list, sizeof(labeltype_t) *program.labeltype_alloc);
+void program_add_vartype(vartype_t vartype) {
+    program.vartype_size++;
+    if (program.vartype_size >= program.vartype_alloc) {
+        program.vartype_alloc *= 2;
+        program.vartype_list = realloc(program.vartype_list, sizeof(vartype_t) *program.vartype_alloc);
     }
-    program.labeltype_list[program.labeltype_size - 1] = labeltype;
+    program.vartype_list[program.vartype_size - 1] = vartype;
 }
 
-void program_add_label(label_t label) {
-    program.label_size++;
-    if (program.label_size >= program.label_alloc) {
-        program.label_alloc *= 2;
-        program.label_list = realloc(program.label_list, sizeof(label_t ) *program.label_alloc);
+void program_add_var(var_t var) {
+    program.var_size++;
+    if (program.var_size >= program.var_alloc) {
+        program.var_alloc *= 2;
+        program.var_list = realloc(program.var_list, sizeof(var_t ) *program.var_alloc);
     }
-    program.label_list[program.label_size - 1] = label;
+    program.var_list[program.var_size - 1] = var;
 }
 
 int word_is_int(char *word) {
@@ -297,7 +297,7 @@ int lex_word_as_token(char *word) {
     } else if (strcmp(word, "^") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_XOR, word);
     } else if (strcmp(word, "=") == 0) {
-        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SET_LABEL, word);
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SET_VAR, word);
     } else if (strcmp(word, "==") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_EQUALS, word);
     } else if (strcmp(word, "!=") == 0) {
@@ -350,11 +350,11 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_ELSE, word);
     } else if (strcmp(word, "loop") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_LOOP, word);
-    } else if (strcmp(word, "label") == 0) {
-        token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_LABEL, word);
+    } else if (strcmp(word, "var") == 0) {
+        token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_VAR, word);
     } else if (strcmp(word, "end") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_END, word);
-    } else if (find_labeltype(word)) {
+    } else if (find_vartype(word)) {
         token_set(&program.token_list[idx], TKN_TYPE, -1, word);
     } else if (word_is_int(word)) {
         token_set(&program.token_list[idx], TKN_INT, OP_PUSH_INT, word);
@@ -465,30 +465,30 @@ int parse_current_token() {
                 return 0;
             }
         } break;
-        case OP_CREATE_LABEL: {
-            // get label name
+        case OP_CREATE_VAR: {
+            // get var name
             program.idx++;
             idx = program.idx;
             if (token_list[idx].type != TKN_ID) {
                 char *msg = malloc(sizeof(char) * ((strlen(token_list[idx].val) * 2) + strlen(token_name[token_list[idx].type]) + 50));
-                sprintf(msg, "trying to define label '%s', but '%s' is %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
+                sprintf(msg, "trying to define var '%s', but '%s' is %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
                 program_error(msg, pos_list[idx]);
                 free(msg);
                 return 0;
             }
             char *name = token_list[idx].val;
-            // get label type
+            // get var type
             program.idx++;
             idx = program.idx;
             if (token_list[idx].type != TKN_TYPE) {
                 char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val) * 2 + 50));
-                sprintf(msg, "trying to define label as type '%s', but '%s' is not a type is a %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
+                sprintf(msg, "trying to define var as type '%s', but '%s' is not a type is a %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
                 program_error(msg, pos_list[idx]);
                 free(msg);
                 return 0;
             }
             char *type = token_list[idx].val;
-            // verify if label is an array
+            // verify if var is an array
             size_t end = 0;
             stack_t stack = stack_create();
             for (size_t i = idx + 1; i < program.token_size; i++) {
@@ -574,31 +574,31 @@ int parse_current_token() {
                 }
             }
             if (end  == 0) {
-                program_error("creating label without a end", pos_list[idx]);
+                program_error("creating var without a end", pos_list[idx]);
                 return 0;
             }
-            label_t label;
+            var_t var;
             if (stack.size == 0) {
-                label = label_create(name, type, 0, 1);
+                var = var_create(name, type, 0, 1);
             } else if (stack.size == 1) {
-                label = label_create(name, type, 1, stack_pop(&stack));
+                var = var_create(name, type, 1, stack_pop(&stack));
             } else {
                 stack_destroy(stack);
                 program_error("array definition can only have one constant value", pos_list[idx]);
                 return 0;
             }
             stack_destroy(stack);
-            if (label.name == NULL) {
+            if (var.name == NULL) {
                 char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val) + 25));
                 sprintf(msg, "type '%s' don't exists", token_list[idx].val);
                 program_error(msg, pos_list[idx]);
                 free(msg);
                 return 0;
             }
-            program_add_label(label);
+            program_add_var(var);
             program.idx = end - 1;
             if (program.setting) {
-                program.cur_label = program.label_size - 1;
+                program.cur_var = program.var_size - 1;
             }
         } break;
         case OP_END: {
@@ -608,12 +608,12 @@ int parse_current_token() {
                 if (token_list[i].type != TKN_KEYWORD) continue;
                 if (idx == 0 || (long)i < 0) break;
                 if (token_list[i].operation == OP_END) end_count++;
-                if ((token_list[i].operation == OP_IF  && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_LABEL) {
+                if ((token_list[i].operation == OP_IF  && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR) {
                     if (end_count > 0) {
                         end_count--;
                     } else {
                         found_open = 1;
-                        program.condition = token_list[i].operation != OP_CREATE_LABEL;
+                        program.condition = token_list[i].operation != OP_CREATE_VAR;
                         if (token_list[i].operation == OP_LOOP) {
                             program.loop = 1;
                             token_list[idx].jmp = i;
@@ -638,29 +638,29 @@ int parse_current_token() {
     } break;
     case TKN_INTRINSIC: {
         switch(token_list[idx].operation) {
-        case OP_SET_LABEL: {
+        case OP_SET_VAR: {
             int find = 0;
-            label_t label;
+            var_t var;
             if (token_list[idx + 1].type == TKN_ID) {
-                for (size_t i = 0; i < program.label_size; i++) {
-                    if (strcmp(token_list[idx + 1].val, program.label_list[i].name) == 0) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
                         find = 1;
-                        label = program.label_list[i];
+                        var = program.var_list[i];
                         break;
                     }
                 }
-            } else if (token_list[idx + 1].operation == OP_CREATE_LABEL) {
+            } else if (token_list[idx + 1].operation == OP_CREATE_VAR) {
                 find = 1;
             }
             if (!find) {
                 char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
-                sprintf(msg, "'%s' is not a label", token_list[idx + 1].val);
+                sprintf(msg, "'%s' is not a var", token_list[idx + 1].val);
                 program_error(msg, program.pos_list[idx]);
                 free(msg);
                 return 0;
             }
 
-            if (token_list[idx + 1].type == TKN_ID && label.arr && token_list[idx + 2].operation != OP_START_INDEX) {
+            if (token_list[idx + 1].type == TKN_ID && var.arr && token_list[idx + 2].operation != OP_START_INDEX) {
                 char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
                 sprintf(msg, "'%s' value is not changeable", token_list[idx + 1].val);
                 program_error(msg, program.pos_list[idx]);
@@ -671,20 +671,20 @@ int parse_current_token() {
         } break;
         case OP_START_INDEX: {
             int find = 0;
-            label_t label;
+            var_t var;
             if (token_list[idx - 1].type == TKN_ID) {
-                for (size_t i = 0; i < program.label_size; i++) {
-                    if (strcmp(token_list[idx - 1].val, program.label_list[i].name) == 0) {
-                        program.cur_label = i;
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx - 1].val, program.var_list[i].name) == 0) {
+                        program.cur_var = i;
                         find = 1;
-                        label = program.label_list[i];
+                        var = program.var_list[i];
                         break;
                     }
                 }
             }
             if (!find) {
                 char *msg = malloc(strlen(token_list[idx - 1].val) + 16);
-                sprintf(msg, "'%s' is not a label", token_list[idx - 1].val);
+                sprintf(msg, "'%s' is not a var", token_list[idx - 1].val);
                 program_error(msg, program.pos_list[idx]);
                 free(msg);
                 return 0;
@@ -695,7 +695,7 @@ int parse_current_token() {
                 return 0;
             }
 
-            if (!label.arr) {
+            if (!var.arr) {
                 program_error("'[]' can only be used in arrays", program.pos_list[idx]);
                 return 0;
             }
@@ -719,25 +719,25 @@ int parse_current_token() {
         } break;
         case OP_CAP: {
             int find = 0;
-            label_t label;
+            var_t var;
             if (token_list[idx - 1].type == TKN_ID) {
-                for (size_t i = 0; i < program.label_size; i++) {
-                    if (strcmp(token_list[idx - 1].val, program.label_list[i].name) == 0) {
-                        program.cur_label = i;
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx - 1].val, program.var_list[i].name) == 0) {
+                        program.cur_var = i;
                         find = 1;
-                        label = program.label_list[i];
+                        var = program.var_list[i];
                         break;
                     }
                 }
             }
             if (!find) {
                 char *msg = malloc(strlen(token_list[idx - 1].val) + 16);
-                sprintf(msg, "'%s' is not a label", token_list[idx - 1].val);
+                sprintf(msg, "'%s' is not a var", token_list[idx - 1].val);
                 program_error(msg, program.pos_list[idx]);
                 free(msg);
                 return 0;
             }
-            if (!label.arr) {
+            if (!var.arr) {
                 program_error("'cap' can only be used in arrays", program.pos_list[idx]);
                 return 0;
             }
@@ -776,10 +776,10 @@ int parse_current_token() {
     case TKN_ID: {
         int find = 0;
         
-        // find label
-        for (size_t i = 0; i < program.label_size; i++) {
-            if (strcmp(program.label_list[i].name, token_list[idx].val) == 0) {
-                token_list[idx].operation = OP_CALL_LABEL;
+        // find var
+        for (size_t i = 0; i < program.var_size; i++) {
+            if (strcmp(program.var_list[i].name, token_list[idx].val) == 0) {
+                token_list[idx].operation = OP_CALL_VAR;
                 find = 1;
                 break;
             }
@@ -825,25 +825,25 @@ void program_init(int argc, char **argv) {
     program.token_alloc = 1;
     program.token_size = 0;
 
-    program.labeltype_list = malloc(sizeof(labeltype_t));
-    malloc_check(program.labeltype_list, "malloc(program.labeltype_list) in function program_init");
-    program.labeltype_alloc = 1;
-    program.labeltype_size = 0;
+    program.vartype_list = malloc(sizeof(vartype_t));
+    malloc_check(program.vartype_list, "malloc(program.vartype_list) in function program_init");
+    program.vartype_alloc = 1;
+    program.vartype_size = 0;
 
-    program.label_list = malloc(sizeof(label_t));
-    malloc_check(program.label_list, "malloc(program.label_list) in function program_init");
-    program.label_alloc = 1;
-    program.label_size = 0;
+    program.var_list = malloc(sizeof(var_t));
+    malloc_check(program.var_list, "malloc(program.var_list) in function program_init");
+    program.var_alloc = 1;
+    program.var_size = 0;
 
     program.condition = 0;
     program.setting = 0;
     program.loop = 0;
     program.error = 0;
 
-    program_add_labeltype(labeltype_create("byte", sizeof(char), 1));
-    program_add_labeltype(labeltype_create("short", sizeof(short), 1));
-    program_add_labeltype(labeltype_create("int", sizeof(int), 1));
-    program_add_labeltype(labeltype_create("long", sizeof(long), 1));
+    program_add_vartype(vartype_create("byte", sizeof(char), 1));
+    program_add_vartype(vartype_create("short", sizeof(short), 1));
+    program_add_vartype(vartype_create("int", sizeof(int), 1));
+    program_add_vartype(vartype_create("long", sizeof(long), 1));
 
     char *word = malloc(sizeof(char));
     malloc_check(word, "malloc(word) in function program_init");
@@ -1078,7 +1078,7 @@ void generate_assembly_x86_64_linux() {
         case OP_CAP: {
             fprintf(output, ";   cap\n");
             fprintf(output, "    pop rax\n");
-            fprintf(output, "    push %lu\n", program.label_list[program.cur_label].cap);
+            fprintf(output, "    push %lu\n", program.var_list[program.cur_var].cap);
         } break;
         case OP_SYSCALL0: {
             fprintf(output, ";   syscall\n");
@@ -1208,20 +1208,20 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    cmovne rcx,rdx\n");
             fprintf(output, "    push rcx\n");
         } break;
-        case OP_CALL_LABEL: { 
-            labeltype_t l;
-            label_t label;
-            for (size_t i = 0; i < program.label_size; i++) {
-                if (strcmp(program.token_list[idx].val, program.label_list[i].name) == 0) {
-                    l = program.labeltype_list[program.label_list[i].type];
-                    label = program.label_list[i];
+        case OP_CALL_VAR: { 
+            vartype_t l;
+            var_t var;
+            for (size_t i = 0; i < program.var_size; i++) {
+                if (strcmp(program.token_list[idx].val, program.var_list[i].name) == 0) {
+                    l = program.vartype_list[program.var_list[i].type];
+                    var = program.var_list[i];
                     break;
                 }
             }
-            // TODO: for now 'set label' and 'get label' just supports primitive types
-            if (program.setting && !label.arr && !program.index) { // set label value
+            // TODO: for now 'set var' and 'get var' just supports primitive types
+            if (program.setting && !var.arr && !program.index) { // set var value
                 program.setting=0;
-                fprintf(output, ";   set label value\n");
+                fprintf(output, ";   set var value\n");
                 fprintf(output, "    pop rax\n");
                 if (l.primitive) {
                     switch (l.size_bytes) {
@@ -1239,11 +1239,11 @@ void generate_assembly_x86_64_linux() {
                         break;
                     }
                 }
-            } else { // get label value
-                fprintf(output, ";   get label value\n");
+            } else { // get var value
+                fprintf(output, ";   get var value\n");
                 if (l.primitive) {
                     fprintf(output, "    xor rax,rax\n");
-                    if (!label.arr) {
+                    if (!var.arr) {
                         switch (l.size_bytes) {
                         case sizeof(char):
                             fprintf(output, "    mov al,byte [%s]\n", program.token_list[idx].val);
@@ -1267,7 +1267,7 @@ void generate_assembly_x86_64_linux() {
         } break;
         case OP_END_INDEX: {
             program.index = 0;
-            labeltype_t l = program.labeltype_list[program.label_list[program.cur_label].type];
+            vartype_t l = program.vartype_list[program.var_list[program.cur_var].type];
             if (program.setting) {
                 program.setting = 0;
                 fprintf(output, ";   set array value\n");
@@ -1345,36 +1345,36 @@ void generate_assembly_x86_64_linux() {
                 }
                 fprintf(output, "ADR%lu:\n", program.idx);
             } else if (program.setting) {
-                label_t label = program.label_list[program.cur_label];
-                labeltype_t l = program.labeltype_list[label.type];
+                var_t var = program.var_list[program.cur_var];
+                vartype_t l = program.vartype_list[var.type];
                 program.setting=0;
-                if (!label.arr) {
-                    fprintf(output, ";   set label value\n");
+                if (!var.arr) {
+                    fprintf(output, ";   set var value\n");
                     fprintf(output, "    pop rax\n");
                     if (l.primitive) {
                         switch (l.size_bytes) {
                         case sizeof(char):
-                            fprintf(output, "    mov byte [%s],al\n", label.name);
+                            fprintf(output, "    mov byte [%s],al\n", var.name);
                             break;
                         case sizeof(short):
-                            fprintf(output, "    mov word [%s],ax\n", label.name);
+                            fprintf(output, "    mov word [%s],ax\n", var.name);
                             break;
                         case sizeof(int):
-                            fprintf(output, "    mov dword [%s],eax\n", label.name);
+                            fprintf(output, "    mov dword [%s],eax\n", var.name);
                             break;
                         case sizeof(long):
-                            fprintf(output, "    mov qword [%s],rax\n", label.name);
+                            fprintf(output, "    mov qword [%s],rax\n", var.name);
                             break;
                         }
                     }
                 } else {
                     fprintf(output, ";   set array value\n");
-                    fprintf(output, "    mov rcx,%lu\n", label.cap - 1);
+                    fprintf(output, "    mov rcx,%lu\n", var.cap - 1);
                     fprintf(output, "ADR%lu:\n", program.idx);
                     fprintf(output, "    mov rax,rcx\n");
                     fprintf(output, "    mov rdx,%lu\n", l.size_bytes);
                     fprintf(output, "    mul rdx\n");
-                    fprintf(output, "    lea rax,[%s + rax]\n", label.name);
+                    fprintf(output, "    lea rax,[%s + rax]\n", var.name);
                     fprintf(output, "    pop rbx\n");
                     if (l.primitive) {
                        switch (l.size_bytes) {
@@ -1411,22 +1411,22 @@ void generate_assembly_x86_64_linux() {
     fprintf(output, "   mov rdi,0\n");
     fprintf(output, "   syscall\n");
     fprintf(output, "segment .bss\n");
-    for (size_t i = 0; i < program.label_size; i++) {
-        labeltype_t l = program.labeltype_list[program.label_list[i].type];
-        size_t alloc = program.label_list[i].cap;
+    for (size_t i = 0; i < program.var_size; i++) {
+        vartype_t l = program.vartype_list[program.var_list[i].type];
+        size_t alloc = program.var_list[i].cap;
         if (l.primitive) {
             switch (l.size_bytes) {
             case sizeof(char):
-                fprintf(output, "%s: resb %lu\n", program.label_list[i].name, alloc);
+                fprintf(output, "%s: resb %lu\n", program.var_list[i].name, alloc);
                 break;
             case sizeof(short):
-                fprintf(output, "%s: resw %lu\n", program.label_list[i].name, alloc);
+                fprintf(output, "%s: resw %lu\n", program.var_list[i].name, alloc);
                 break;
             case sizeof(int):
-                fprintf(output, "%s: resd %lu\n", program.label_list[i].name, alloc);
+                fprintf(output, "%s: resd %lu\n", program.var_list[i].name, alloc);
                 break;
             case sizeof(long):
-                fprintf(output, "%s: resq %lu\n", program.label_list[i].name, alloc);
+                fprintf(output, "%s: resq %lu\n", program.var_list[i].name, alloc);
                 break;
             default:
                 break;
@@ -1442,16 +1442,16 @@ void program_quit() {
     for (size_t i = 0; i < program.token_size; i++) {
         free(program.token_list[i].val);
     }
-    for (size_t i = 0; i < program.labeltype_size; i++) {
-        free(program.labeltype_list[i].name);
+    for (size_t i = 0; i < program.vartype_size; i++) {
+        free(program.vartype_list[i].name);
     }
-    for (size_t i = 0; i < program.label_size; i++) {
-        free(program.label_list[i].name);
+    for (size_t i = 0; i < program.var_size; i++) {
+        free(program.var_list[i].name);
     }
     free(program.pos_list);
     free(program.token_list);
-    free(program.labeltype_list);
-    free(program.label_list);
+    free(program.vartype_list);
+    free(program.var_list);
 }
 
 int main(int argc, char **argv) {

@@ -1,8 +1,8 @@
-69 = label foo int end
-foo print
-
-10 9 8 7 6 = label arr int 5 end 
-0 loop dup arr cap < do
-    dup arr[swap] print
+0 1 1 1 0 1 1 0 = var table byte 8 end
+var write_buf byte 9 end
+0 loop dup table cap < do
+    dup dup table[swap] 48 + swap = write_buf[swap]
     1 +
 end
+10 = write_buf[table cap]
+write_buf cap write_buf 1 1 syscall3 drop

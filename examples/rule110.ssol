@@ -1,7 +1,7 @@
-label board byte 30 end
-label write_buf byte 31 end
-32 35 = label char byte 2 end
-label pattern int end
+var board byte 30 end
+var write_buf byte 31 end
+32 35 = var char byte 2 end
+var pattern int end
 
 1 = board[board cap 2 -]
 0 loop dup board cap 2 - < do
