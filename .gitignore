@@ -4,3 +4,4 @@ output*
 ssol
 *.sh
 *.out
+test.c

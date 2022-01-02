@@ -24,6 +24,12 @@ typedef struct {
         OP_MUL,
         OP_DIV,
         OP_MOD,
+        OP_SHR,
+        OP_SHL,
+        OP_BAND,
+        OP_BOR,
+        OP_BNOT,
+        OP_XOR,
         OP_PRINT,
         OP_DUP,
         OP_SWAP,
@@ -278,6 +284,18 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_DIV, word);
     } else if (strcmp(word, "%") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_MOD, word);
+    } else if (strcmp(word, ">>") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SHR, word);
+    } else if (strcmp(word, "<<") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SHL, word);
+    } else if (strcmp(word, "&") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_BAND, word);
+    } else if (strcmp(word, "|") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_BOR, word);
+    } else if (strcmp(word, "~") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_BNOT, word);
+    } else if (strcmp(word, "^") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_XOR, word);
     } else if (strcmp(word, "=") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SET_LABEL, word);
     } else if (strcmp(word, "==") == 0) {
@@ -509,6 +527,35 @@ int parse_current_token() {
                         size_t a = stack_pop(&stack);
                         stack_push(&stack, a % b);
                     } break;
+                    case OP_SHR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a >> b);
+                    } break;
+                    case OP_SHL: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a << b);
+                    } break;
+                    case OP_BAND: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a & b);
+                    } break;
+                    case OP_BOR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a | b);
+                    } break;
+                    case OP_BNOT: {
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, ~a);
+                    } break;
+                    case OP_XOR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a ^ b);
+                    } break;
                     default: {
                         invalid = 1;
                     } break;
@@ -693,6 +740,11 @@ int parse_current_token() {
         case OP_MOD:
         case OP_DROP:
         case OP_PRINT:
+        case OP_SHR:
+        case OP_SHL:
+        case OP_BAND:
+        case OP_BOR:
+        case OP_XOR:
             if (program.index) 
                 program.idx_amount--;
             break;
@@ -940,6 +992,48 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    pop rax\n");
             fprintf(output, "    div rbx\n");
             fprintf(output, "    push rdx\n");
+        } break;
+        case OP_SHR: {
+            fprintf(output, ";   shift right int\n");
+            fprintf(output, "    pop rcx\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    sar rbx,cl\n");
+            fprintf(output, "    push rbx\n");
+        } break;
+        case OP_SHL: {
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    pop rcx\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    sal rbx,cl\n");
+            fprintf(output, "    push rbx\n");
+        } break;
+        case OP_BAND: {
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    and rbx,rax\n");
+            fprintf(output, "    push rbx\n");
+        } break;
+        case OP_BOR: {
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    or rbx,rax\n");
+            fprintf(output, "    push rbx\n");
+        } break;
+        case OP_BNOT: {
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    mov rax,0xffffffffffffffff\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    xor rbx,rax\n");
+            fprintf(output, "    push rbx\n");
+        } break;
+        case OP_XOR: {
+            fprintf(output, ";   div int\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    xor rbx,rax\n");
+            fprintf(output, "    push rbx\n");
         } break;
         case OP_PRINT: {
             fprintf(output, ";   print int\n");
