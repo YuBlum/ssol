@@ -597,6 +597,9 @@ int parse_current_token() {
             }
             program_add_label(label);
             program.idx = end - 1;
+            if (program.setting) {
+                program.cur_label = program.label_size - 1;
+            }
         } break;
         case OP_END: {
             size_t end_count = 0;
@@ -646,6 +649,8 @@ int parse_current_token() {
                         break;
                     }
                 }
+            } else if (token_list[idx + 1].operation == OP_CREATE_LABEL) {
+                find = 1;
             }
             if (!find) {
                 char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
@@ -655,7 +660,7 @@ int parse_current_token() {
                 return 0;
             }
 
-            if (label.arr && token_list[idx + 2].operation != OP_START_INDEX) {
+            if (token_list[idx + 1].type == TKN_ID && label.arr && token_list[idx + 2].operation != OP_START_INDEX) {
                 char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
                 sprintf(msg, "'%s' value is not changeable", token_list[idx + 1].val);
                 program_error(msg, program.pos_list[idx]);
@@ -682,6 +687,11 @@ int parse_current_token() {
                 sprintf(msg, "'%s' is not a label", token_list[idx - 1].val);
                 program_error(msg, program.pos_list[idx]);
                 free(msg);
+                return 0;
+            }
+
+            if (program.index) {
+                program_error("trying to use '[]' operator inside a '[]' operator", program.pos_list[idx]);
                 return 0;
             }
 
@@ -727,12 +737,11 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
-
             if (!label.arr) {
                 program_error("'cap' can only be used in arrays", program.pos_list[idx]);
                 return 0;
             }
-        }
+        } break;
         case OP_PLUS:
         case OP_MINUS:
         case OP_MUL:
@@ -1335,6 +1344,58 @@ void generate_assembly_x86_64_linux() {
                     fprintf(output, "    jmp ADR%lu\n", program.token_list[idx].jmp);
                 }
                 fprintf(output, "ADR%lu:\n", program.idx);
+            } else if (program.setting) {
+                label_t label = program.label_list[program.cur_label];
+                labeltype_t l = program.labeltype_list[label.type];
+                program.setting=0;
+                if (!label.arr) {
+                    fprintf(output, ";   set label value\n");
+                    fprintf(output, "    pop rax\n");
+                    if (l.primitive) {
+                        switch (l.size_bytes) {
+                        case sizeof(char):
+                            fprintf(output, "    mov byte [%s],al\n", label.name);
+                            break;
+                        case sizeof(short):
+                            fprintf(output, "    mov word [%s],ax\n", label.name);
+                            break;
+                        case sizeof(int):
+                            fprintf(output, "    mov dword [%s],eax\n", label.name);
+                            break;
+                        case sizeof(long):
+                            fprintf(output, "    mov qword [%s],rax\n", label.name);
+                            break;
+                        }
+                    }
+                } else {
+                    fprintf(output, ";   set array value\n");
+                    fprintf(output, "    mov rcx,%lu\n", label.cap - 1);
+                    fprintf(output, "ADR%lu:\n", program.idx);
+                    fprintf(output, "    mov rax,rcx\n");
+                    fprintf(output, "    mov rdx,%lu\n", l.size_bytes);
+                    fprintf(output, "    mul rdx\n");
+                    fprintf(output, "    lea rax,[%s + rax]\n", label.name);
+                    fprintf(output, "    pop rbx\n");
+                    if (l.primitive) {
+                       switch (l.size_bytes) {
+                       case sizeof(char):
+                           fprintf(output, "    mov byte [rax],bl\n");
+                           break;
+                       case sizeof(short):
+                           fprintf(output, "    mov word [rax],bx\n");
+                           break;
+                       case sizeof(int):
+                           fprintf(output, "    mov dword [rax],ebx\n");
+                           break;
+                       case sizeof(long):
+                           fprintf(output, "    mov qword [rax],rbx\n");
+                           break;
+                       }
+                    }
+                    fprintf(output, "    dec rcx\n");
+                    fprintf(output, "    cmp rcx,0\n");
+                    fprintf(output, "    jge ADR%lu\n", program.idx);
+                }
             }
         } break;
         default:

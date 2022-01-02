@@ -1,19 +1,19 @@
-label board byte 100 end
-label BOARD_CAP int end board cap = BOARD_CAP
-
-label char byte 3 end 32 = char[0] 35 = char[1] 10 = char[2]
-
-1 = board[BOARD_CAP 2 -]
+label board byte 30 end
+label write_buf byte 31 end
+32 35 = label char byte 2 end
 label pattern int end
-0 loop dup BOARD_CAP 2 - < do
-    0 loop dup BOARD_CAP < do
-        dup 1 swap board[swap] char + 1 1 syscall3 drop
+
+1 = board[board cap 2 -]
+0 loop dup board cap 2 - < do
+    0 loop dup board cap < do
+        dup dup board[swap] char[swap] swap = write_buf[swap]
         1 +
     end drop
-    1 char 2 + 1 1 syscall3 drop
+    10 = write_buf[board cap]
+    write_buf cap write_buf 1 1 syscall3 drop
 
     board[0] 1 << board[1] | = pattern
-    1 loop dup BOARD_CAP 1 - <  do
+    1 loop dup board cap 1 - <  do
         dup pattern 1 << 7 & swap board[swap 1 +] | = pattern
         dup 110 pattern >> 1 & swap = board[swap]
         1 +

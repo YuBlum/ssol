@@ -1,6 +1,8 @@
-1 4 << print
-32 2 >> print
-10 2 | print
-10 2 & print
-24 24 ^ print
-4 ~ print
+69 = label foo int end
+foo print
+
+10 9 8 7 6 = label arr int 5 end 
+0 loop dup arr cap < do
+    dup arr[swap] print
+    1 +
+end
