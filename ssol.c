@@ -382,7 +382,7 @@ int parse_current_token() {
                 size_t if_count = 0;
                 for (size_t i = idx + 1; i < program.token_size; i++) {
                     if (token_list[i].type != TKN_KEYWORD) continue;
-                    if (token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) if_count++;
+                    if ((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP) if_count++;
                     if (token_list[i].operation == OP_END) {
                         if (if_count > 0) {
                             if_count--;
@@ -390,7 +390,7 @@ int parse_current_token() {
                             jmp = i;
                             break;
                         }
-                    } else if (token_list[i].operation == OP_ELSE) {
+                    } else if (token_list[i].operation == OP_ELSE && !program.loop) {
                         if (if_count == 0) {
                             jmp = i;
                             break;
@@ -1210,7 +1210,7 @@ void generate_assembly_x86_64_linux() {
                 }
             }
             // TODO: for now 'set label' and 'get label' just supports primitive types
-            if (program.setting && !label.arr) { // set label value
+            if (program.setting && !label.arr && !program.index) { // set label value
                 program.setting=0;
                 fprintf(output, ";   set label value\n");
                 fprintf(output, "    pop rax\n");
