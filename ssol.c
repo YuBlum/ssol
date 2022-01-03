@@ -49,6 +49,7 @@ typedef struct {
         OP_DO,
         OP_ELSE,
         OP_LOOP,
+        OP_CREATE_CONST,
         OP_CREATE_VAR,
         OP_SET_VAR,
         OP_CALL_VAR,
@@ -80,6 +81,14 @@ typedef struct {
     size_t type;
     int arr;
     size_t cap;
+    int constant;
+    // TODO: make the const_val be a list of unions for non primitive types
+    union {
+        unsigned char b8;
+        unsigned short b16;
+        unsigned int b32;
+        unsigned long b64;
+    } const_val;
 } var_t;
 
 typedef struct {
@@ -108,6 +117,7 @@ typedef struct {
     int loop;
     int setting;
     int index;
+    int const_def;
     size_t idx_amount;
     size_t cur_var;
 } program_t;
@@ -215,6 +225,7 @@ var_t var_create(char *name, char *type_name, int arr, size_t cap) {
     var.type = type;
     var.arr = arr;
     var.cap = cap;
+    var.constant = 0;
     return var;
 }
 
@@ -352,6 +363,8 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_LOOP, word);
     } else if (strcmp(word, "var") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_VAR, word);
+    } else if (strcmp(word, "const") == 0) {
+        token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_CONST, word);
     } else if (strcmp(word, "end") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_END, word);
     } else if (find_vartype(word)) {
@@ -469,6 +482,10 @@ int parse_current_token() {
             // get var name
             program.idx++;
             idx = program.idx;
+            if (program.token_size == program.idx) {
+                program_error("variable definition is invalid", pos_list[idx-1]);
+                return 0;
+            }
             if (token_list[idx].type != TKN_ID) {
                 char *msg = malloc(sizeof(char) * ((strlen(token_list[idx].val) * 2) + strlen(token_name[token_list[idx].type]) + 50));
                 sprintf(msg, "trying to define var '%s', but '%s' is %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
@@ -476,10 +493,23 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
+            for (size_t i = 0; i < program.var_size; i++) {
+                if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine var '%s'", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
             char *name = token_list[idx].val;
             // get var type
             program.idx++;
             idx = program.idx;
+            if (program.token_size == program.idx) {
+                program_error("variable definition is invalid", pos_list[idx-1]);
+                return 0;
+            }
             if (token_list[idx].type != TKN_TYPE) {
                 char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val) * 2 + 50));
                 sprintf(msg, "trying to define var as type '%s', but '%s' is not a type is a %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
@@ -562,6 +592,34 @@ int parse_current_token() {
                     }
                 } else if (token_list[i].type == TKN_INT) {
                     stack_push(&stack, atol(token_list[i].val)); 
+                } else if (token_list[i].type == TKN_ID) {
+                    var_t var;
+                    int find_v = 0;
+                    for (size_t j = 0; j < program.var_size; j++) {
+                        if (strcmp(token_list[i].val, program.var_list[j].name) == 0) {
+                            find_v = 1;
+                            var = program.var_list[j];
+                            break;
+                        }
+                    }
+                    if (find_v && var.constant && program.vartype_list[var.type].primitive) {
+                        switch (program.vartype_list[var.type].size_bytes) {
+                        case sizeof(char):
+                            stack_push(&stack, var.const_val.b8);
+                            break;
+                        case sizeof(short):
+                            stack_push(&stack, var.const_val.b16);
+                            break;
+                        case sizeof(int):
+                            stack_push(&stack, var.const_val.b32);
+                            break;
+                        case sizeof(long):
+                            stack_push(&stack, var.const_val.b64);
+                            break;
+                        }
+                    } else {
+                        invalid = 1;
+                    }
                 } else {
                     invalid = 1;
                 }
@@ -600,6 +658,206 @@ int parse_current_token() {
             if (program.setting) {
                 program.cur_var = program.var_size - 1;
             }
+        } break;
+        case OP_CREATE_CONST: {
+            // get var name
+            program.idx++;
+            idx = program.idx;
+            if (program.token_size == program.idx) {
+                program_error("constant definition is invalid", pos_list[idx-1]);
+                return 0;
+            }
+            if (token_list[idx].type != TKN_ID) {
+                char *msg = malloc(sizeof(char) * ((strlen(token_list[idx].val) * 2) + strlen(token_name[token_list[idx].type]) + 50));
+                sprintf(msg, "trying to define const '%s', but '%s' is %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+            for (size_t i = 0; i < program.var_size; i++) {
+                if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine const '%s'", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
+            char *name = token_list[idx].val;
+            // get var type
+            program.idx++;
+            idx = program.idx;
+            if (program.token_size == program.idx) {
+                program_error("constant definition is invalid", pos_list[idx-1]);
+                return 0;
+            }
+            if (token_list[idx].type != TKN_TYPE) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val) * 2 + 50));
+                sprintf(msg, "trying to define const as type '%s', but '%s' is not a type is a %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+            char *type = token_list[idx].val;
+            // TODO: for now constants can't be arrays and just support primitive types
+            // get const value
+            size_t end = 0;
+            stack_t stack = stack_create();
+            for (size_t i = idx + 1; i < program.token_size; i++) {
+                int invalid = 0;
+                if (token_list[i].type == TKN_KEYWORD) {
+                    if (token_list[i].operation == OP_END) {
+                        end = i + 1;
+                        break;
+                    } else {
+                        invalid = 1;
+                    }
+                } else if (token_list[i].type == TKN_INTRINSIC) {
+                    switch (token_list[i].operation) {
+                    case OP_PLUS: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a + b);
+                    } break;
+                    case OP_MINUS: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a - b);
+                    } break;
+                    case OP_MUL: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a * b);
+                    } break;
+                    case OP_DIV: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a / b);
+                    } break;
+                    case OP_MOD: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a % b);
+                    } break;
+                    case OP_SHR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a >> b);
+                    } break;
+                    case OP_SHL: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a << b);
+                    } break;
+                    case OP_BAND: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a & b);
+                    } break;
+                    case OP_BOR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a | b);
+                    } break;
+                    case OP_BNOT: {
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, ~a);
+                    } break;
+                    case OP_XOR: {
+                        size_t b = stack_pop(&stack);
+                        size_t a = stack_pop(&stack);
+                        stack_push(&stack, a ^ b);
+                    } break;
+                    default: {
+                        invalid = 1;
+                    } break;
+                    }
+                } else if (token_list[i].type == TKN_INT) {
+                    stack_push(&stack, atol(token_list[i].val)); 
+                } else if (token_list[i].type == TKN_ID) {
+                    var_t var;
+                    int find_v = 0;
+                    for (size_t j = 0; j < program.var_size; j++) {
+                        if (strcmp(token_list[i].val, program.var_list[j].name) == 0) {
+                            find_v = 1;
+                            var = program.var_list[j];
+                            break;
+                        }
+                    }
+                    if (find_v && var.constant && program.vartype_list[var.type].primitive) {
+                        switch (program.vartype_list[var.type].size_bytes) {
+                        case sizeof(char):
+                            stack_push(&stack, var.const_val.b8);
+                            break;
+                        case sizeof(short):
+                            stack_push(&stack, var.const_val.b16);
+                            break;
+                        case sizeof(int):
+                            stack_push(&stack, var.const_val.b32);
+                            break;
+                        case sizeof(long):
+                            stack_push(&stack, var.const_val.b64);
+                            break;
+                        }
+                    } else {
+                        invalid = 1;
+                    }
+                } else {
+                    invalid = 1;
+                }
+                if (invalid) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[i].val) + 40));
+                    sprintf(msg, "'%s' is not valid in a const definition", token_list[i].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
+            if (end  == 0) {
+                program_error("creating const without a end", pos_list[idx]);
+                return 0;
+            }
+            var_t var;
+            if (stack.size == 1) {
+                var = var_create(name, type, 0, 1);
+                vartype_t vt = program.vartype_list[var.type];
+                var.constant = 1;
+                if (vt.primitive) {
+                    switch (vt.size_bytes) {
+                    case sizeof(char):
+                        var.const_val.b8 = stack_pop(&stack);
+                        break;
+                    case sizeof(short):
+                        var.const_val.b16 = stack_pop(&stack);
+                        break;
+                    case sizeof(int):
+                        var.const_val.b32 = stack_pop(&stack);
+                        break;
+                    case sizeof(long):
+                        var.const_val.b64 = stack_pop(&stack);
+                        break;
+                    }
+                }
+            } else {
+                char *msg = malloc(sizeof(char) * 92);
+                sprintf(msg, "const definition can only have 1 constant value, but got %lu", stack.size);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                stack_destroy(stack);
+                return 0;
+            }
+            stack_destroy(stack);
+            if (var.name == NULL) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val) + 25));
+                sprintf(msg, "type '%s' don't exists", token_list[idx].val);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+            program_add_var(var);
+            program.idx = end - 1;
+            program.const_def = 1;
+            program.cur_var = program.var_size - 1;
         } break;
         case OP_END: {
             size_t end_count = 0;
@@ -640,7 +898,7 @@ int parse_current_token() {
         switch(token_list[idx].operation) {
         case OP_SET_VAR: {
             int find = 0;
-            var_t var;
+            var_t var = {0};
             if (token_list[idx + 1].type == TKN_ID) {
                 for (size_t i = 0; i < program.var_size; i++) {
                     if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
@@ -657,6 +915,11 @@ int parse_current_token() {
                 sprintf(msg, "'%s' is not a var", token_list[idx + 1].val);
                 program_error(msg, program.pos_list[idx]);
                 free(msg);
+                return 0;
+            }
+
+            if (var.constant) {
+                program_error("trying to modify a constant variable", program.pos_list[idx]);
                 return 0;
             }
 
@@ -839,6 +1102,7 @@ void program_init(int argc, char **argv) {
     program.setting = 0;
     program.loop = 0;
     program.error = 0;
+    program.const_def = 0;
 
     program_add_vartype(vartype_create("byte", sizeof(char), 1));
     program_add_vartype(vartype_create("short", sizeof(short), 1));
@@ -1395,6 +1659,26 @@ void generate_assembly_x86_64_linux() {
                     fprintf(output, "    dec rcx\n");
                     fprintf(output, "    cmp rcx,0\n");
                     fprintf(output, "    jge ADR%lu\n", program.idx);
+                }
+            } else if (program.const_def) {
+                fprintf(output, ";   constant definition\n");
+                var_t var = program.var_list[program.cur_var];
+                vartype_t l = program.vartype_list[var.type];
+                if (l.primitive) {
+                    switch (l.size_bytes) {
+                    case sizeof(char):
+                        fprintf(output, "    mov byte [%s],%d\n", var.name, var.const_val.b8);
+                        break;
+                    case sizeof(short):
+                        fprintf(output, "    mov word [%s],%d\n", var.name, var.const_val.b16);
+                        break;
+                    case sizeof(int):
+                        fprintf(output, "    mov dword [%s],%u\n", var.name, var.const_val.b32);
+                        break;
+                    case sizeof(long):
+                        fprintf(output, "    mov qword [%s],%lu\n", var.name, var.const_val.b64);
+                        break;
+                    }
                 }
             }
         } break;

@@ -1,8 +1,8 @@
-0 1 1 1 0 1 1 0 = var table byte 8 end
-var write_buf byte 9 end
-0 loop dup table cap < do
-    dup dup table[swap] 48 + swap = write_buf[swap]
-    1 +
-end
-10 = write_buf[table cap]
-write_buf cap write_buf 1 1 syscall3 drop
+const NUMBER int 34 end
+var buff byte NUMBER 35 + end
+
+66 117 102 102 32 67 97 112 58 32 = var text byte 10 end
+
+text cap text 1 1 syscall3 drop
+buff cap print
+
