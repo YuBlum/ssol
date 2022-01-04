@@ -1079,6 +1079,8 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
+            if (program.index) 
+                program.idx_amount--;
         } break;
         case OP_CAP: {
             int find = 0;
@@ -1333,7 +1335,7 @@ void generate_assembly_x86_64_linux() {
         size_t idx = program.idx;
         switch (program.token_list[idx].operation) {
         case OP_PUSH_INT: {
-            fprintf(output, ";   push int %lu %lu\n", program.pos_list[idx].line, program.pos_list[idx].col);
+            fprintf(output, ";   push int\n");
             fprintf(output, "    push %s\n", program.token_list[idx].val);
         } break;
         case OP_PLUS: {
