@@ -53,6 +53,9 @@ typedef struct {
         OP_CREATE_VAR,
         OP_SET_VAR,
         OP_CALL_VAR,
+        OP_GET_ADR,
+        OP_STORE,
+        OP_FETCH,
         //OP_REPEAT,
         //OP_BREAK,
         OP_END,
@@ -116,10 +119,12 @@ typedef struct {
     int condition;
     int loop;
     int setting;
+    int address;
     int index;
     int const_def;
     size_t idx_amount;
     size_t cur_var;
+    size_t cur_vartype;
 } program_t;
 
 program_t program;
@@ -309,6 +314,12 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_XOR, word);
     } else if (strcmp(word, "=") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SET_VAR, word);
+    } else if (strcmp(word, "$") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_GET_ADR, word);
+    } else if (strcmp(word, "!") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_STORE, word);
+    } else if (strcmp(word, "@") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_FETCH, word);
     } else if (strcmp(word, "==") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_EQUALS, word);
     } else if (strcmp(word, "!=") == 0) {
@@ -896,6 +907,55 @@ int parse_current_token() {
     } break;
     case TKN_INTRINSIC: {
         switch(token_list[idx].operation) {
+        case OP_FETCH:
+        case OP_STORE: {
+            int find = 0;
+            if (token_list[idx + 1].type == TKN_TYPE) {
+                for (size_t i = 0; i < program.vartype_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.vartype_list[i].name) == 0) {
+                        find = 1;
+                        program.cur_vartype = i;
+                        break;
+                    }
+                }
+            }
+            if (!find) {
+                char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
+                sprintf(msg, "'%s' is not a type", token_list[idx + 1].val);
+                program_error(msg, program.pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+        } break;
+        case OP_GET_ADR: {
+            int find = 0;
+            var_t var = {0};
+            if (token_list[idx + 1].type == TKN_ID) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
+                        find = 1;
+                        var = program.var_list[i];
+                        break;
+                    }
+                }
+            } else if (token_list[idx + 1].operation == OP_CREATE_VAR) {
+                find = 1;
+            }
+            if (!find) {
+                char *msg = malloc(strlen(token_list[idx + 1].val) + 16);
+                sprintf(msg, "'%s' is not a var", token_list[idx + 1].val);
+                program_error(msg, program.pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+
+            if (var.constant) {
+                program_error("you can't get the address of an constant", program.pos_list[idx]);
+                return 0;
+            }
+
+            program.address = 1;
+        } break;
         case OP_SET_VAR: {
             int find = 0;
             var_t var = {0};
@@ -1100,6 +1160,7 @@ void program_init(int argc, char **argv) {
 
     program.condition = 0;
     program.setting = 0;
+    program.address = 0;
     program.loop = 0;
     program.error = 0;
     program.const_def = 0;
@@ -1108,6 +1169,7 @@ void program_init(int argc, char **argv) {
     program_add_vartype(vartype_create("short", sizeof(short), 1));
     program_add_vartype(vartype_create("int", sizeof(int), 1));
     program_add_vartype(vartype_create("long", sizeof(long), 1));
+    program_add_vartype(vartype_create("ptr", sizeof(long), 1));
 
     char *word = malloc(sizeof(char));
     malloc_check(word, "malloc(word) in function program_init");
@@ -1127,7 +1189,7 @@ void program_init(int argc, char **argv) {
         cur_char = nxt_char;
         nxt_char = fgetc(f);
         col++;
-        if (cur_char == ' ' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']') {
+        if (cur_char == ' ' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
             if (word_size > 0) {
                 word[word_size] = '\0';
                 program_add_token(pos_create(argv[1], line, col_word));
@@ -1146,7 +1208,7 @@ void program_init(int argc, char **argv) {
             } else {
                col_word = col;
             }
-            if (cur_char == '[' || cur_char == ']') {
+            if (cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
                 word = realloc(word, sizeof(char) * 2);
                 word[0] = cur_char;
                 word[1] = '\0';
@@ -1308,6 +1370,54 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    xor rbx,rax\n");
             fprintf(output, "    push rbx\n");
         } break;
+        case OP_STORE: {
+            fprintf(output, ";   store\n");
+            vartype_t vt = program.vartype_list[program.cur_vartype];
+            if (vt.primitive) {
+                fprintf(output, "    pop rax\n");
+                fprintf(output, "    pop rbx\n");
+                switch (vt.size_bytes) {
+                case sizeof(char):
+                    fprintf(output, "    mov byte [rbx],al\n");
+                    break;
+                case sizeof(short):
+                    fprintf(output, "    mov word [rbx],ax\n");
+                    break;
+                case sizeof(int):
+                    fprintf(output, "    mov dword [rbx],eax\n");
+                    break;
+                case sizeof(long):
+                    fprintf(output, "    mov qword [rbx],rax\n");
+                    break;
+                }
+            }
+            program.idx++;
+        } break;
+        case OP_FETCH: {
+            fprintf(output, ";   fetch\n");
+            vartype_t vt = program.vartype_list[program.cur_vartype];
+            if (vt.primitive) {
+                fprintf(output, "    pop rbx\n");
+                fprintf(output, "    xor rax,rax\n");
+                switch (vt.size_bytes) {
+                case sizeof(char):
+                    fprintf(output, "    mov al,byte [rbx]\n");
+                    break;
+                case sizeof(short):
+                    fprintf(output, "    mov ax,word [rbx]\n");
+                    break;
+                case sizeof(int):
+                    fprintf(output, "    mov eax,dword [rbx]\n");
+                    break;
+                case sizeof(long):
+                    fprintf(output, "    mov rax,qword [rbx]\n");
+                    break;
+                }
+                fprintf(output, "    push rax\n");
+            }
+            program.idx++;
+        } break;
+
         case OP_PRINT: {
             fprintf(output, ";   print int\n");
             fprintf(output, "    pop rax\n");
@@ -1503,7 +1613,12 @@ void generate_assembly_x86_64_linux() {
                         break;
                     }
                 }
-            } else { // get var value
+            } else if (program.address && !program.index) { // get var address
+                program.address = 0;
+                fprintf(output, ";   get var address\n");
+                fprintf(output, "    mov rax,%s\n", program.token_list[idx].val);
+                fprintf(output, "    push rax\n");
+            } else {  // get var value
                 fprintf(output, ";   get var value\n");
                 if (l.primitive) {
                     fprintf(output, "    xor rax,rax\n");
@@ -1557,6 +1672,15 @@ void generate_assembly_x86_64_linux() {
                        break;
                    }
                 }
+           } else if (program.address) {
+                program.address = 0;
+                fprintf(output, ";   get array address\n");
+                fprintf(output, "    pop rax\n");
+                fprintf(output, "    pop rbx\n");
+                fprintf(output, "    mov rdx,%lu\n", l.size_bytes);
+                fprintf(output, "    mul rdx\n");
+                fprintf(output, "    lea rax,[rbx + rax]\n");
+                fprintf(output, "    push rax\n");
            } else {
                 fprintf(output, ";   get array value\n");
                 fprintf(output, "    pop rax\n");
@@ -1588,16 +1712,16 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, ";   do\n");
             fprintf(output, "    pop rax\n");
             fprintf(output, "    test rax,rax\n");
-            fprintf(output, "    jz ADR%lu\n", program.token_list[idx].jmp);
+            fprintf(output, "    jz $ADR%lu\n", program.token_list[idx].jmp);
         } break;
         case OP_ELSE: {
             fprintf(output, ";   else\n");
-            fprintf(output, "    jmp ADR%lu\n", program.token_list[idx].jmp);
-            fprintf(output, "ADR%lu:\n", program.idx);
+            fprintf(output, "    jmp $ADR%lu\n", program.token_list[idx].jmp);
+            fprintf(output, "$ADR%lu:\n", program.idx);
         } break;
         case OP_LOOP: {
             fprintf(output, ";   loop\n");
-            fprintf(output, "ADR%lu:\n", program.idx);
+            fprintf(output, "$ADR%lu:\n", program.idx);
         } break;
         case OP_END: {
             if (program.condition) {
@@ -1605,9 +1729,9 @@ void generate_assembly_x86_64_linux() {
                 fprintf(output, ";   end\n");
                 if (program.loop) {
                     program.loop = 0;
-                    fprintf(output, "    jmp ADR%lu\n", program.token_list[idx].jmp);
+                    fprintf(output, "    jmp $ADR%lu\n", program.token_list[idx].jmp);
                 }
-                fprintf(output, "ADR%lu:\n", program.idx);
+                fprintf(output, "$ADR%lu:\n", program.idx);
             } else if (program.setting) {
                 var_t var = program.var_list[program.cur_var];
                 vartype_t l = program.vartype_list[var.type];
@@ -1634,7 +1758,7 @@ void generate_assembly_x86_64_linux() {
                 } else {
                     fprintf(output, ";   set array value\n");
                     fprintf(output, "    mov rcx,%lu\n", var.cap - 1);
-                    fprintf(output, "ADR%lu:\n", program.idx);
+                    fprintf(output, "$ADR%lu:\n", program.idx);
                     fprintf(output, "    mov rax,rcx\n");
                     fprintf(output, "    mov rdx,%lu\n", l.size_bytes);
                     fprintf(output, "    mul rdx\n");
@@ -1658,7 +1782,7 @@ void generate_assembly_x86_64_linux() {
                     }
                     fprintf(output, "    dec rcx\n");
                     fprintf(output, "    cmp rcx,0\n");
-                    fprintf(output, "    jge ADR%lu\n", program.idx);
+                    fprintf(output, "    jge $ADR%lu\n", program.idx);
                 }
             } else if (program.const_def) {
                 fprintf(output, ";   constant definition\n");

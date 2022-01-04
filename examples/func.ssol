@@ -1,11 +1,8 @@
 # currently dont work
 
-func make_2d_arr -> ptr (int int)
-    = var rows int end
-    = var cols int end
-    memory cols rows * end = arr2d
+function make_grid (rows int cols int) -> ptr do
+    memory cols rows * end = var arr2d ptr end
     arr2d
 end
 
-var grid ptr end
-10 20 make_2d_arr = grid
+10 20 make_grid = var grid ptr end

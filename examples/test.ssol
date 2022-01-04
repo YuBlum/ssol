@@ -1,8 +1,7 @@
-const NUMBER int 34 end
-var buff byte NUMBER 35 + end
+420 = var foo short end
+$foo = var pointer ptr end
 
-66 117 102 102 32 67 97 112 58 32 = var text byte 10 end
-
-text cap text 1 1 syscall3 drop
-buff cap print
-
+pointer 69 !byte
+pointer @byte print
+pointer @short print
+foo print
