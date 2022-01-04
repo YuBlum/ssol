@@ -49,6 +49,8 @@ typedef struct {
         OP_DO,
         OP_ELSE,
         OP_LOOP,
+        OP_MEMORY,
+        OP_DELETE,
         OP_CREATE_CONST,
         OP_CREATE_VAR,
         OP_SET_VAR,
@@ -56,6 +58,7 @@ typedef struct {
         OP_GET_ADR,
         OP_STORE,
         OP_FETCH,
+        OP_SIZEOF,
         //OP_REPEAT,
         //OP_BREAK,
         OP_END,
@@ -121,7 +124,9 @@ typedef struct {
     int setting;
     int address;
     int index;
+    int size_of;
     int const_def;
+    int has_malloc;
     size_t idx_amount;
     size_t cur_var;
     size_t cur_vartype;
@@ -320,6 +325,8 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_STORE, word);
     } else if (strcmp(word, "@") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_FETCH, word);
+    } else if (strcmp(word, "sizeof") == 0) {
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SIZEOF, word);
     } else if (strcmp(word, "==") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_EQUALS, word);
     } else if (strcmp(word, "!=") == 0) {
@@ -364,6 +371,12 @@ int lex_word_as_token(char *word) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL5, word);
     } else if (strcmp(word, "syscall6") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_SYSCALL6, word);
+    } else if (strcmp(word, "memory") == 0) {
+        if (program.has_malloc == 0) program.has_malloc = 1;
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_MEMORY, word);
+    } else if (strcmp(word, "delete") == 0) {
+        if (program.has_malloc == 0) program.has_malloc = 1;
+        token_set(&program.token_list[idx], TKN_INTRINSIC, OP_DELETE, word);
     } else if (strcmp(word, "do") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_DO, word);
     } else if (strcmp(word, "if") == 0) {
@@ -907,6 +920,22 @@ int parse_current_token() {
     } break;
     case TKN_INTRINSIC: {
         switch(token_list[idx].operation) {
+        case OP_SIZEOF: {
+            int find = 0;
+             if (token_list[idx + 1].type == TKN_ID) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
+                        find = 1;
+                        break;
+                    }
+                }
+            }
+            if (find) {
+                program.size_of = 1;
+                program.token_list[idx].operation = -1;
+                break;
+            }
+        }
         case OP_FETCH:
         case OP_STORE: {
             int find = 0;
@@ -994,35 +1023,49 @@ int parse_current_token() {
         } break;
         case OP_START_INDEX: {
             int find = 0;
-            var_t var;
-            if (token_list[idx - 1].type == TKN_ID) {
-                for (size_t i = 0; i < program.var_size; i++) {
-                    if (strcmp(token_list[idx - 1].val, program.var_list[i].name) == 0) {
-                        program.cur_var = i;
-                        find = 1;
-                        var = program.var_list[i];
-                        break;
+            if (!program.size_of) {
+                var_t var;
+                if (token_list[idx - 1].type == TKN_ID) {
+                    for (size_t i = 0; i < program.var_size; i++) {
+                        if (strcmp(token_list[idx - 1].val, program.var_list[i].name) == 0) {
+                            program.cur_var = i;
+                            find = 1;
+                            var = program.var_list[i];
+                            break;
+                        }
                     }
                 }
-            }
-            if (!find) {
-                char *msg = malloc(strlen(token_list[idx - 1].val) + 16);
-                sprintf(msg, "'%s' is not a var", token_list[idx - 1].val);
-                program_error(msg, program.pos_list[idx]);
-                free(msg);
-                return 0;
-            }
+                if (!find) {
+                    char *msg = malloc(strlen(token_list[idx - 1].val) + 16);
+                    sprintf(msg, "'%s' is not a var", token_list[idx - 1].val);
+                    program_error(msg, program.pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
 
-            if (program.index) {
-                program_error("trying to use '[]' operator inside a '[]' operator", program.pos_list[idx]);
-                return 0;
-            }
+                if (program.index) {
+                    program_error("trying to use '[]' operator inside a '[]' operator", program.pos_list[idx]);
+                    return 0;
+                }
 
-            if (!var.arr) {
-                program_error("'[]' can only be used in arrays", program.pos_list[idx]);
-                return 0;
+                if (!var.arr) {
+                    program_error("'[]' can only be used in arrays", program.pos_list[idx]);
+                    return 0;
+                }
+                program.index = 1;
+            } else {
+                for (size_t i = idx + 1; i < program.token_size; i++) {
+                    if (program.token_list[i].operation == OP_END_INDEX) {
+                        find = 1;
+                        program.idx = i + 1;
+                        if  (program.idx >= program.token_size) return 0;
+                    }
+                }
+                if (!find) {
+                    program_error("'[' without ']'", program.pos_list[idx]);
+                    return 0;
+                }
             }
-            program.index = 1;
         } break;
         case OP_END_INDEX: {
             if (!program.index) {
@@ -1036,9 +1079,6 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
-            if (program.index) 
-                program.idx_amount--;
-
         } break;
         case OP_CAP: {
             int find = 0;
@@ -1164,6 +1204,8 @@ void program_init(int argc, char **argv) {
     program.loop = 0;
     program.error = 0;
     program.const_def = 0;
+    program.size_of = 0;
+    program.has_malloc = 0;
 
     program_add_vartype(vartype_create("byte", sizeof(char), 1));
     program_add_vartype(vartype_create("short", sizeof(short), 1));
@@ -1250,7 +1292,10 @@ void generate_assembly_x86_64_linux() {
     }
     fprintf(output, "BITS 64\n");
     fprintf(output, "segment .text\n");
-    fprintf(output, "global _start\n");
+    if (program.has_malloc) {
+        fprintf(output, "extern malloc, free\n");
+    }
+    fprintf(output, "global main\n");
     fprintf(output, "_print:\n");
     fprintf(output, "    mov rsi,rsp\n");
     fprintf(output, "    sub rsp,32\n");
@@ -1283,12 +1328,12 @@ void generate_assembly_x86_64_linux() {
     fprintf(output, "    add rsp,32\n");
     fprintf(output, "    ret\n");
 
-    fprintf(output, "_start:\n");
+    fprintf(output, "main:\n");
     while (parse_current_token(program)) {
         size_t idx = program.idx;
         switch (program.token_list[idx].operation) {
         case OP_PUSH_INT: {
-            fprintf(output, ";   push int\n");
+            fprintf(output, ";   push int %lu %lu\n", program.pos_list[idx].line, program.pos_list[idx].col);
             fprintf(output, "    push %s\n", program.token_list[idx].val);
         } break;
         case OP_PLUS: {
@@ -1417,7 +1462,12 @@ void generate_assembly_x86_64_linux() {
             }
             program.idx++;
         } break;
-
+        case OP_SIZEOF: {
+            fprintf(output, ";   sizeof\n");
+            vartype_t vt = program.vartype_list[program.cur_vartype];
+            fprintf(output, "    push %lu\n", vt.size_bytes);
+            program.idx++;
+        } break;
         case OP_PRINT: {
             fprintf(output, ";   print int\n");
             fprintf(output, "    pop rax\n");
@@ -1582,6 +1632,17 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    cmovne rcx,rdx\n");
             fprintf(output, "    push rcx\n");
         } break;
+        case OP_DELETE: {
+                fprintf(output, ";   delete memory\n");
+                fprintf(output, "    pop rdi\n");
+                fprintf(output, "    call free WRT ..plt\n");
+        } break;
+        case OP_MEMORY: {
+                fprintf(output, ";   memory allocation\n");
+                fprintf(output, "    pop rdi\n");
+                fprintf(output, "    call malloc WRT ..plt\n");
+                fprintf(output, "    push rax\n");
+        } break;
         case OP_CALL_VAR: { 
             vartype_t l;
             var_t var;
@@ -1613,11 +1674,22 @@ void generate_assembly_x86_64_linux() {
                         break;
                     }
                 }
-            } else if (program.address && !program.index) { // get var address
+            } else if (program.address && !program.index && program.token_list[idx + 1].operation != OP_START_INDEX) { // get address
                 program.address = 0;
                 fprintf(output, ";   get var address\n");
                 fprintf(output, "    mov rax,%s\n", program.token_list[idx].val);
                 fprintf(output, "    push rax\n");
+            } else if (program.size_of && !program.index ) { // sizeof var
+                program.size_of = 0;
+                fprintf(output, ";   sizeof\n");
+                if (!var.arr || program.token_list[idx + 1].operation == OP_START_INDEX) {
+                    fprintf(output, "    push %lu\n", l.size_bytes);
+                    if (program.token_list[idx + 1].operation == OP_START_INDEX) {
+                        program.size_of = 1;
+                    }
+                } else {
+                    fprintf(output, "    push %lu\n", l.size_bytes * var.cap);
+                }
             } else {  // get var value
                 fprintf(output, ";   get var value\n");
                 if (l.primitive) {
@@ -1672,7 +1744,7 @@ void generate_assembly_x86_64_linux() {
                        break;
                    }
                 }
-           } else if (program.address) {
+            } else if (program.address) {
                 program.address = 0;
                 fprintf(output, ";   get array address\n");
                 fprintf(output, "    pop rax\n");
@@ -1681,7 +1753,7 @@ void generate_assembly_x86_64_linux() {
                 fprintf(output, "    mul rdx\n");
                 fprintf(output, "    lea rax,[rbx + rax]\n");
                 fprintf(output, "    push rax\n");
-           } else {
+            } else {
                 fprintf(output, ";   get array value\n");
                 fprintf(output, "    pop rax\n");
                 fprintf(output, "    pop rbx\n");
@@ -1815,9 +1887,8 @@ void generate_assembly_x86_64_linux() {
         exit(1);
     }
     fprintf(output, ";  exit program_code\n");
-    fprintf(output, "   mov rax,60\n");
-    fprintf(output, "   mov rdi,0\n");
-    fprintf(output, "   syscall\n");
+    fprintf(output, "   xor rax,rax\n");
+    fprintf(output, "   ret\n");
     fprintf(output, "segment .bss\n");
     for (size_t i = 0; i < program.var_size; i++) {
         vartype_t l = program.vartype_list[program.var_list[i].type];
@@ -1841,9 +1912,9 @@ void generate_assembly_x86_64_linux() {
             }
         }
     }
-    fclose(output);
+        fclose(output);
     system("nasm -felf64 output.asm -o output.o");
-    system("ld -o output output.o");
+    system("gcc -no-pie -o output output.o");
 }
 
 void program_quit() {

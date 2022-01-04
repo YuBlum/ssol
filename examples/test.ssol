@@ -1,7 +1,4 @@
-420 = var foo short end
-$foo = var pointer ptr end
-
-pointer 69 !byte
-pointer @byte print
-pointer @short print
-foo print
+sizeof int memory = var foo ptr end
+foo 69420 !int
+foo @int print
+foo delete
