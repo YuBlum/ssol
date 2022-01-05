@@ -1,0 +1,10 @@
+var acc int end
+proc main
+    0 1 loop dup 4000000 < do
+        dup rot +
+        if dup 2 % 0 == do
+            dup acc + = acc
+        end
+    end drop
+    acc print
+end

@@ -1,0 +1,9 @@
+proc main
+    0 1 loop dup 1000 < do
+        if dup dup 3 % 0 == swap 5 % 0 == | do
+            dup rot + swap
+        end
+        1 +
+    end drop
+    print
+end

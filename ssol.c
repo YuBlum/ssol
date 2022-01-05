@@ -150,7 +150,6 @@ typedef struct {
     int address;
     int index;
     int size_of;
-    int const_def;
     int proc_def;
     int has_malloc;
     int has_main;
@@ -995,7 +994,6 @@ int parse_current_token() {
             }
             program_add_var(var);
             program.idx = end - 1;
-            program.const_def = 1;
             program.cur_var = program.var_size - 1;
         } break;
         case OP_CREATE_PROC: {
@@ -1407,7 +1405,6 @@ void program_init(int argc, char **argv) {
     program.address = 0;
     program.loop = 0;
     program.error = 0;
-    program.const_def = 0;
     program.proc_def = 0;
     program.has_malloc = 0;
     program.has_main = 0;
@@ -1638,7 +1635,8 @@ void generate_assembly_x86_64_linux() {
         switch (program.token_list[idx].operation) {
         case OP_PUSH_INT: {
             fprintf(output, ";   push int\n");
-            fprintf(output, "    push %s\n", program.token_list[idx].val);
+            fprintf(output, "    mov rax,%s\n", program.token_list[idx].val);
+            fprintf(output, "    push rax\n");
         } break;
         case OP_PUSH_STR: {
             fprintf(output, ";   push str\n");
@@ -2008,26 +2006,30 @@ void generate_assembly_x86_64_linux() {
             } else {  // get var value
                 fprintf(output, ";   get var value\n");
                 if (l.primitive) {
-                    fprintf(output, "    xor rax,rax\n");
-                    if (!var.arr) {
-                        switch (l.size_bytes) {
-                        case sizeof(char):
-                            fprintf(output, "    mov al,byte [%s]\n", program.token_list[idx].val);
-                            break;
-                        case sizeof(short):
-                            fprintf(output, "    mov ax,word [%s]\n", program.token_list[idx].val);
-                            break;
-                        case sizeof(int):
-                            fprintf(output, "    mov eax,dword [%s]\n", program.token_list[idx].val);
-                            break;
-                        case sizeof(long):
-                            fprintf(output, "    mov rax,qword [%s]\n", program.token_list[idx].val);
-                            break;
+                    if (!var.constant) {
+                        fprintf(output, "    xor rax,rax\n");
+                        if (!var.arr) {
+                            switch (l.size_bytes) {
+                            case sizeof(char):
+                                fprintf(output, "    mov al,byte [%s]\n", program.token_list[idx].val);
+                                break;
+                            case sizeof(short):
+                                fprintf(output, "    mov ax,word [%s]\n", program.token_list[idx].val);
+                                break;
+                            case sizeof(int):
+                                fprintf(output, "    mov eax,dword [%s]\n", program.token_list[idx].val);
+                                break;
+                            case sizeof(long):
+                                fprintf(output, "    mov rax,qword [%s]\n", program.token_list[idx].val);
+                                break;
+                            }
+                        } else {
+                            fprintf(output, "    mov rax, %s\n", program.token_list[idx].val);
                         }
+                        fprintf(output, "    push rax\n");
                     } else {
-                        fprintf(output, "    mov rax, %s\n", program.token_list[idx].val);
+                        fprintf(output, "    push %s\n", var.name);
                     }
-                    fprintf(output, "    push rax\n");
                 }
             }
         } break;
@@ -2190,35 +2192,15 @@ void generate_assembly_x86_64_linux() {
                     fprintf(output, "    cmp rcx,0\n");
                     fprintf(output, "    jge $ADR%lu\n", program.idx);
                 }
-            } else if (program.const_def) {
-                fprintf(output, ";   constant definition\n");
-                var_t var = program.var_list[program.cur_var];
-                vartype_t l = program.vartype_list[var.type];
-                if (l.primitive) {
-                    switch (l.size_bytes) {
-                    case sizeof(char):
-                        fprintf(output, "    mov byte [%s],%d\n", var.name, var.const_val.b8);
-                        break;
-                    case sizeof(short):
-                        fprintf(output, "    mov word [%s],%d\n", var.name, var.const_val.b16);
-                        break;
-                    case sizeof(int):
-                        fprintf(output, "    mov dword [%s],%u\n", var.name, var.const_val.b32);
-                        break;
-                    case sizeof(long):
-                        fprintf(output, "    mov qword [%s],%lu\n", var.name, var.const_val.b64);
-                        break;
-                    }
-                }
             } else if (program.cur_proc.size != 0) {
                 proc_t proc = program.proc_list[stack_pop(&program.cur_proc)];
                 fprintf(output, ";   end proc\n");
-                if (strcmp(proc.name, "main") == 0) {
-                    fprintf(output, "    pop rax\n");
-                }
                 fprintf(output, "    mov rax,qword [$RETP]\n");
                 fprintf(output, "    push qword [rax]\n");
                 fprintf(output, "    sub qword [$RETP],8\n");
+                if (strcmp(proc.name, "main") == 0) {
+                    fprintf(output, "    xor rax,rax\n");
+                }
                 fprintf(output, "    ret\n");
             }
         } break;
@@ -2232,6 +2214,7 @@ void generate_assembly_x86_64_linux() {
     }
     fprintf(output, "segment .bss\n");
     for (size_t i = 0; i < program.var_size; i++) {
+        if (program.var_list[i].constant) continue;
         vartype_t l = program.vartype_list[program.var_list[i].type];
         size_t alloc = program.var_list[i].cap;
         if (l.primitive) {
@@ -2265,6 +2248,28 @@ void generate_assembly_x86_64_linux() {
                 fprintf(output, ",");
             } else {
                 fprintf(output, "\n");
+            }
+        }
+    }
+    for (size_t i = 0; i < program.var_size; i++) {
+        if (!program.var_list[i].constant) continue;
+        vartype_t l = program.vartype_list[program.var_list[i].type];
+        if (l.primitive) {
+            switch (l.size_bytes) {
+            case sizeof(char):
+                fprintf(output, "%s: equ %d\n", program.var_list[i].name, program.var_list[i].const_val.b8);
+                break;
+            case sizeof(short):
+                fprintf(output, "%s: equ %d\n", program.var_list[i].name, program.var_list[i].const_val.b16);
+                break;
+            case sizeof(int):
+                fprintf(output, "%s: equ %u\n", program.var_list[i].name, program.var_list[i].const_val.b32);
+                break;
+            case sizeof(long):
+                fprintf(output, "%s: equ %lu\n", program.var_list[i].name, program.var_list[i].const_val.b64);
+                break;
+            default:
+                break;
             }
         }
     }
