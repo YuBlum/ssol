@@ -14,11 +14,13 @@ typedef struct {
         TKN_KEYWORD,
         TKN_INTRINSIC,
         TKN_INT,
+        TKN_STR,
         TKN_TYPE,
         TKN_COUNT
     } type;
     enum {
         OP_PUSH_INT,
+        OP_PUSH_STR,
         OP_PLUS,
         OP_MINUS,
         OP_MUL,
@@ -98,6 +100,12 @@ typedef struct {
 } var_t;
 
 typedef struct {
+    char *str;
+    size_t len;
+    size_t adr;
+} str_t;
+
+typedef struct {
     size_t *stack;
     size_t size;
     size_t alloc;
@@ -116,6 +124,10 @@ typedef struct {
     var_t *var_list;
     size_t var_size;
     size_t var_alloc;
+
+    str_t *str_list;
+    size_t str_size;
+    size_t str_alloc;
 
     size_t idx;
     int error;
@@ -173,6 +185,14 @@ size_t stack_pop(stack_t *stack) {
 
 void stack_destroy(stack_t stack) {
     free(stack.stack);
+}
+
+str_t str_create(char *str_data, size_t adr) {
+    str_t str;
+    str.str = str_data;
+    str.len = strlen(str_data);
+    str.adr = adr + 1;
+    return str;
 }
 
 pos_t pos_create(char *file, size_t line, size_t col) {
@@ -268,6 +288,15 @@ void program_add_var(var_t var) {
     program.var_list[program.var_size - 1] = var;
 }
 
+void program_add_str(str_t str) {
+    program.str_size++;
+    if (program.str_size >= program.str_alloc) {
+        program.str_alloc *= 2;
+        program.str_list = realloc(program.str_list, sizeof(str_t ) *program.str_alloc);
+    }
+    program.str_list[program.str_size - 1] = str;
+}
+
 int word_is_int(char *word) {
     int result = 1;
     size_t len = strlen(word);
@@ -292,10 +321,14 @@ void program_error(char *msg, pos_t pos) {
     program.error = 1;
 }
 
-int lex_word_as_token(char *word) {
+int lex_word_as_token(char *word, int is_str, size_t adr) {
     size_t idx = program.idx;
     if (idx >= program.token_size) return 0;
-    if (strcmp(word, "+") == 0) {
+
+    if (is_str) {
+        token_set(&program.token_list[idx], TKN_STR, OP_PUSH_STR, word);
+        program.token_list[idx].jmp = adr;
+    } else if (strcmp(word, "+") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_PLUS, word);
     } else if (strcmp(word, "-") == 0) {
         token_set(&program.token_list[idx], TKN_INTRINSIC, OP_MINUS, word);
@@ -1200,6 +1233,11 @@ void program_init(int argc, char **argv) {
     program.var_alloc = 1;
     program.var_size = 0;
 
+    program.str_list = malloc(sizeof(str_t));
+    malloc_check(program.str_list, "malloc(program.str_list) in function program_init");
+    program.str_alloc = 1;
+    program.str_size = 0;
+
     program.condition = 0;
     program.setting = 0;
     program.address = 0;
@@ -1223,21 +1261,85 @@ void program_init(int argc, char **argv) {
     size_t line = 1;
     size_t col = 1;
     size_t col_word = 1;
+    size_t str_line = 1;
+    size_t str_col = 1;
 
     //char prv_char = 0;
     char cur_char = 0;
     char nxt_char = fgetc(f);
+
+    int is_str = 0;
 
     while (cur_char != EOF) {
         //prv_char = cur_char;
         cur_char = nxt_char;
         nxt_char = fgetc(f);
         col++;
-        if (cur_char == ' ' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
-            if (word_size > 0) {
+        if (!is_str) {
+            if (cur_char == '"') {
+                is_str = 1;
+                str_line = line;
+                str_col = col_word;
+                continue;
+            }
+            if (cur_char == ' ' || cur_char == '"' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
+                if (word_size > 0) {
+                    word[word_size] = '\0';
+                    program_add_token(pos_create(argv[1], line, col_word));
+                    lex_word_as_token(word, 0, 0);
+                    if (program.error) {
+                        exit(1);
+                    }
+                    word = malloc(sizeof(char));
+                    malloc_check(word, "malloc(word) in function program_init");
+                    word_size = 0;
+                    word_alloc = 1;
+                }
+                if (cur_char == '\n') {
+                   line++;
+                   col = col_word = 1;
+                } else {
+                   col_word = col;
+                }
+                if (cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
+                    word = realloc(word, sizeof(char) * 2);
+                    word[0] = cur_char;
+                    word[1] = '\0';
+                    program_add_token(pos_create(argv[1], line, col_word));
+                    lex_word_as_token(word, 0, 0); 
+                    if (program.error) {
+                        exit(1);
+                    }
+                    word = malloc(sizeof(char));
+                    malloc_check(word, "malloc(word) in function program_init");
+                    word_size = 0;
+                    word_alloc = 1;
+                }
+                continue;
+            }
+            word_size++;
+            if (word_size >= word_alloc) {
+                word_alloc *= 2;
+                word = realloc(word, sizeof(char) *word_alloc);
+                malloc_check(word, "realloc(word) in function program_init");
+            }
+            word[word_size - 1] = cur_char;
+        } else {
+            if (cur_char == '"') {
+                is_str = 0;
                 word[word_size] = '\0';
-                program_add_token(pos_create(argv[1], line, col_word));
-                lex_word_as_token(word);
+                size_t adr = 0;
+                for (size_t i = 0; i < program.str_size; i++) {
+                    if (strcmp(word, program.str_list[i].str) == 0) {
+                        adr = program.str_list[i].adr;
+                    }
+                }
+                program_add_token(pos_create(argv[1], str_line, str_col));
+                if (adr == 0) {
+                    program_add_str(str_create(word, program.idx));
+                    adr = program.str_list[program.str_size - 1].adr;
+                }
+                lex_word_as_token(word, 1, adr);
                 if (program.error) {
                     exit(1);
                 }
@@ -1245,36 +1347,70 @@ void program_init(int argc, char **argv) {
                 malloc_check(word, "malloc(word) in function program_init");
                 word_size = 0;
                 word_alloc = 1;
-            }
-            if (cur_char == '\n') {
-               line++;
-               col = col_word = 1;
+                line = str_line;
+                col = col_word;
+                continue;
+            } else if (cur_char == '\n') {
+                line++;
+                col = col_word = 1;
             } else {
-               col_word = col;
-            }
-            if (cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
-                word = realloc(word, sizeof(char) * 2);
-                word[0] = cur_char;
-                word[1] = '\0';
-                program_add_token(pos_create(argv[1], line, col_word));
-                lex_word_as_token(word);
-                if (program.error) {
-                    exit(1);
+                col_word = col;
+                word_size++;
+                if (word_size >= word_alloc) {
+                    word_alloc *= 2;
+                    word = realloc(word, sizeof(char) *word_alloc);
+                    malloc_check(word, "realloc(word) in function program_init");
                 }
-                word = malloc(sizeof(char));
-                malloc_check(word, "malloc(word) in function program_init");
-                word_size = 0;
-                word_alloc = 1;
+                if (cur_char != '\\') {
+                    word[word_size - 1] = cur_char;
+                } else {
+                    switch (nxt_char) {
+                    case 'a':
+                        word[word_size - 1] = '\a';
+                        break;
+                    case 'b':
+                        word[word_size - 1] = '\b';
+                        break;
+                    case 'e':
+                        word[word_size - 1] = '\e';
+                        break;
+                    case 'f':
+                        word[word_size - 1] = '\f';
+                        break;
+                    case 'n':
+                        word[word_size - 1] = '\n';
+                        break;
+                    case 'r':
+                        word[word_size - 1] = '\r';
+                        break;
+                    case 't':
+                        word[word_size - 1] = '\t';
+                        break;
+                    case 'v':
+                        word[word_size - 1] = '\v';
+                        break;
+                    case '\\':
+                        word[word_size - 1] = '\\';
+                        break;
+                    case '\'':
+                        word[word_size - 1] = '\'';
+                        break;
+                    case '"':
+                        word[word_size - 1] = '\"';
+                        break;
+                    case '?':
+                        word[word_size - 1] = '\?';
+                        break;
+                    // TODO: add \nnn \xhh... \uhhhh \Uhhhhhhhh
+                    default:
+                        fprintf(stderr, "%s:%lu:%lu ERROR: unknown escape sequence: '\\%c'\n", argv[1], line, col, nxt_char);
+                        program.error = 1;
+                        break;
+                    }
+                    nxt_char = fgetc(f);
+                }
             }
-            continue;
         }
-        word_size++;
-        if (word_size >= word_alloc) {
-            word_alloc *= 2;
-            word = realloc(word, sizeof(char) *word_alloc);
-            malloc_check(word, "realloc(word) in function program_init");
-        }
-        word[word_size - 1] = cur_char;
     }
     free(word);
     fclose(f);
@@ -1337,6 +1473,17 @@ void generate_assembly_x86_64_linux() {
         case OP_PUSH_INT: {
             fprintf(output, ";   push int\n");
             fprintf(output, "    push %s\n", program.token_list[idx].val);
+        } break;
+        case OP_PUSH_STR: {
+            fprintf(output, ";   push str\n");
+            str_t str;
+            for (size_t i = 0; i < program.str_size; i++) {
+                if (program.str_list[i].adr == program.token_list[idx].jmp) {
+                    str = program.str_list[i];
+                }
+            }
+            fprintf(output, "    push %lu\n", str.len);
+            fprintf(output, "    push $STR%lu\n", program.token_list[idx].jmp);
         } break;
         case OP_PLUS: {
             fprintf(output, ";   add int\n");
@@ -1914,7 +2061,21 @@ void generate_assembly_x86_64_linux() {
             }
         }
     }
-        fclose(output);
+    fprintf(output, "segment .data\n");
+    for (size_t i = 0; i < program.str_size; i++) {
+        str_t str = program.str_list[i];
+        fprintf(output, "$STR%lu: db ", str.adr);
+        for (size_t i = 0; i < str.len; i++) {
+            fprintf(output, "0x%x", str.str[i]);
+            if (i < str.len - 1) {
+                fprintf(output, ",");
+            } else {
+                fprintf(output, "\n");
+            }
+        }
+    }
+
+    fclose(output);
     system("nasm -felf64 output.asm -o output.o");
     system("gcc -no-pie -o output output.o");
 }

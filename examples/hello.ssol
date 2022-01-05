@@ -1,17 +1,1 @@
-label msg byte 14 end
-0   dup 72  swap = msg[swap]
-1 + dup 101 swap = msg[swap]
-1 + dup 108 swap = msg[swap]
-1 + dup 108 swap = msg[swap]
-1 + dup 111 swap = msg[swap]
-1 + dup 44  swap = msg[swap]
-1 + dup 32  swap = msg[swap]
-1 + dup 87  swap = msg[swap]
-1 + dup 111 swap = msg[swap]
-1 + dup 114 swap = msg[swap]
-1 + dup 108 swap = msg[swap]
-1 + dup 100 swap = msg[swap]
-1 + dup 33  swap = msg[swap]
-1 + dup 10  swap = msg[swap] 
-1 + msg 1 1 syscall3
-
+"Hello, World!\n" 1 1 syscall3 drop

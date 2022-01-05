@@ -1,12 +1,11 @@
 var board byte 30 end
 var write_buf byte 31 end
-32 35 = var char byte 2 end
 var pattern int end
 
 1 = board[board cap 2 -]
 0 loop dup board cap 2 - < do
     0 loop dup board cap < do
-        dup dup board[swap] char[swap] swap = write_buf[swap]
+        dup dup board[swap] " #" swap drop swap + @byte swap = write_buf[swap]
         1 +
     end drop
     10 = write_buf[board cap]

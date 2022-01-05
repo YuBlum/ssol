@@ -1,4 +1,0 @@
-sizeof int memory = var foo ptr end
-foo 69420 !int
-foo @int print
-foo delete
