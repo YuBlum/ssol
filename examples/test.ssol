@@ -1,10 +1,15 @@
-proc add_and_print
-    + print
+proc forever
+    + if dup 69 == do
+        400 20 forever
+    end
+
+    print
 end
 
 proc main
-    34 35 add_and_print
-    390 30 add_and_print
-    34290 35130 add_and_print
+    30 40 forever
+    10 10 forever
+    34 35 forever
+    90 90 forever
     0
 end

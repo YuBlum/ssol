@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
+
+#define RET_STACK_CAP 4096
 
 typedef struct {
     char *file;
@@ -109,7 +112,6 @@ typedef struct {
 
 typedef struct {
     char *name;
-    size_t adr;
 } proc_t;
 
 typedef struct {
@@ -212,7 +214,6 @@ str_t str_create(char *str_data, size_t adr) {
 proc_t proc_create(char *name) {
     proc_t proc;
     proc.name = name;
-    proc.adr = program.proc_size * sizeof(long);
     return proc;
 }
 
@@ -1449,7 +1450,7 @@ void program_init(int argc, char **argv) {
                 str_col = col_word;
                 continue;
             }
-            if (cur_char == ' ' || cur_char == '"' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
+            if (cur_char == ' ' || cur_char == '"' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
                 if (word_size > 0) {
                     word[word_size] = '\0';
                     program_add_token(pos_create(argv[1], line, col_word));
@@ -1468,7 +1469,7 @@ void program_init(int argc, char **argv) {
                 } else {
                    col_word = col;
                 }
-                if (cur_char == '[' || cur_char == ']' || cur_char == '=' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
+                if (cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
                     word = realloc(word, sizeof(char) * 2);
                     word[0] = cur_char;
                     word[1] = '\0';
@@ -2100,12 +2101,18 @@ void generate_assembly_x86_64_linux() {
         } break;
         case OP_CREATE_PROC: {
             program.idx++;
-            if (program.has_main && strcmp(program.token_list[idx + 1].val, "main") == 0) {
+            int is_main = program.has_main && strcmp(program.token_list[idx + 1].val, "main") == 0;
+            if (is_main) {
                 fprintf(output, "global main\n");
             }
             fprintf(output, ";   create proc\n");
             fprintf(output, "%s:\n", program.token_list[idx + 1].val);
-            fprintf(output, "    pop qword [$RET + %lu]\n", program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].adr);
+            if (is_main) {
+                fprintf(output, "    mov qword [$RETP], $RET\n");
+            }
+            fprintf(output, "    add qword [$RETP],8\n");
+            fprintf(output, "    mov rax,qword [$RETP]\n");
+            fprintf(output, "    pop qword [rax]\n");
         } break;
         case OP_DO: {
             fprintf(output, ";   do\n");
@@ -2209,7 +2216,9 @@ void generate_assembly_x86_64_linux() {
                 if (strcmp(proc.name, "main") == 0) {
                     fprintf(output, "    pop rax\n");
                 }
-                fprintf(output, "    push qword[$RET + %lu]\n", proc.adr);
+                fprintf(output, "    mov rax,qword [$RETP]\n");
+                fprintf(output, "    push qword [rax]\n");
+                fprintf(output, "    sub qword [$RETP],8\n");
                 fprintf(output, "    ret\n");
             }
         } break;
@@ -2244,9 +2253,8 @@ void generate_assembly_x86_64_linux() {
             }
         }
     }
-    if (program.proc_size > 0) {
-        fprintf(output, "$RET: resq %lu\n", program.proc_size);
-    }
+    fprintf(output, "$RET: resb %u\n", RET_STACK_CAP);
+    fprintf(output, "$RETP: resq 1\n");
     fprintf(output, "segment .data\n");
     for (size_t i = 0; i < program.str_size; i++) {
         str_t str = program.str_list[i];
