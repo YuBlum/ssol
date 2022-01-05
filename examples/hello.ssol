@@ -1,1 +1,4 @@
-"Hello, World!\n" 1 1 syscall3 drop
+proc main
+    "Hello, World!\n" 1 1 syscall3 drop
+    0
+end

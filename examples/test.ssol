@@ -1,0 +1,10 @@
+proc add_and_print
+    + print
+end
+
+proc main
+    34 35 add_and_print
+    390 30 add_and_print
+    34290 35130 add_and_print
+    0
+end

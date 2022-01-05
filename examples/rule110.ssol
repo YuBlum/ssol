@@ -1,21 +1,23 @@
 var board byte 30 end
 var write_buf byte 31 end
 var pattern int end
-
-1 = board[board cap 2 -]
-0 loop dup board cap 2 - < do
-    0 loop dup board cap < do
-        dup dup board[swap] " #" swap drop swap + @byte swap = write_buf[swap]
+proc main
+    1 = board[board cap 2 -]
+    0 loop dup board cap 2 - < do
+        0 loop dup board cap < do
+            dup dup board[swap] " #" swap drop swap + @byte swap = write_buf[swap]
+            1 +
+        end drop
+        10 = write_buf[board cap]
+        write_buf cap write_buf 1 1 syscall3 drop
+    
+        board[0] 1 << board[1] | = pattern
+        1 loop dup board cap 1 - <  do
+            dup pattern 1 << 7 & swap board[swap 1 +] | = pattern
+            dup 110 pattern >> 1 & swap = board[swap]
+            1 +
+        end drop
         1 +
     end drop
-    10 = write_buf[board cap]
-    write_buf cap write_buf 1 1 syscall3 drop
-
-    board[0] 1 << board[1] | = pattern
-    1 loop dup board cap 1 - <  do
-        dup pattern 1 << 7 & swap board[swap 1 +] | = pattern
-        dup 110 pattern >> 1 & swap = board[swap]
-        1 +
-    end drop
-    1 +
-end drop
+    0
+end

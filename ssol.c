@@ -61,6 +61,8 @@ typedef struct {
         OP_STORE,
         OP_FETCH,
         OP_SIZEOF,
+        OP_CREATE_PROC,
+        OP_CALL_PROC,
         //OP_REPEAT,
         //OP_BREAK,
         OP_END,
@@ -106,6 +108,11 @@ typedef struct {
 } str_t;
 
 typedef struct {
+    char *name;
+    size_t adr;
+} proc_t;
+
+typedef struct {
     size_t *stack;
     size_t size;
     size_t alloc;
@@ -129,6 +136,10 @@ typedef struct {
     size_t str_size;
     size_t str_alloc;
 
+    proc_t *proc_list;
+    size_t proc_size;
+    size_t proc_alloc;
+
     size_t idx;
     int error;
     int condition;
@@ -138,10 +149,13 @@ typedef struct {
     int index;
     int size_of;
     int const_def;
+    int proc_def;
     int has_malloc;
+    int has_main;
     size_t idx_amount;
     size_t cur_var;
     size_t cur_vartype;
+    stack_t cur_proc;
 } program_t;
 
 program_t program;
@@ -193,6 +207,13 @@ str_t str_create(char *str_data, size_t adr) {
     str.len = strlen(str_data);
     str.adr = adr + 1;
     return str;
+}
+
+proc_t proc_create(char *name) {
+    proc_t proc;
+    proc.name = name;
+    proc.adr = program.proc_size * sizeof(long);
+    return proc;
 }
 
 pos_t pos_create(char *file, size_t line, size_t col) {
@@ -295,6 +316,15 @@ void program_add_str(str_t str) {
         program.str_list = realloc(program.str_list, sizeof(str_t ) *program.str_alloc);
     }
     program.str_list[program.str_size - 1] = str;
+}
+
+void program_add_proc(proc_t proc) {
+    program.proc_size++;
+    if (program.proc_size >= program.proc_alloc) {
+        program.proc_alloc *= 2;
+        program.proc_list = realloc(program.proc_list, sizeof(proc_t ) *program.proc_alloc);
+    }
+    program.proc_list[program.proc_size - 1] = proc;
 }
 
 int word_is_int(char *word) {
@@ -422,6 +452,8 @@ int lex_word_as_token(char *word, int is_str, size_t adr) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_VAR, word);
     } else if (strcmp(word, "const") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_CONST, word);
+    } else if (strcmp(word, "proc") == 0) {
+        token_set(&program.token_list[idx], TKN_KEYWORD, OP_CREATE_PROC, word);
     } else if (strcmp(word, "end") == 0) {
         token_set(&program.token_list[idx], TKN_KEYWORD, OP_END, word);
     } else if (find_vartype(word)) {
@@ -447,6 +479,13 @@ int parse_current_token() {
     case TKN_KEYWORD: {
         switch(token_list[idx].operation) {
         case OP_DO: {
+            if (program.cur_proc.size == 0) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+                sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
             if (program.condition) {
                 size_t jmp = 0;
                 size_t if_count = 0;
@@ -475,14 +514,22 @@ int parse_current_token() {
                     return 0;
                 }
                 token_list[idx].jmp = jmp;
-                program.condition = 0;
                 program.loop = 0;
+                program.condition = 0;
             } else {
                 program_error("do without a if or loop", pos_list[idx]);
                 return 0;
             }
         } break;
         case OP_IF: {
+            if (program.cur_proc.size == 0) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+                sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+
             program.condition = 1;
             if (token_list[idx].operation == OP_DO) {
                 program_error("if condition can't be empty", program.pos_list[idx]);
@@ -490,6 +537,14 @@ int parse_current_token() {
             }
         } break;
         case OP_ELSE: {
+            if (program.cur_proc.size == 0) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+                sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+
             size_t jmp = 0;
             size_t if_count = 0;
             for (size_t i = idx + 1; i < program.token_size; i++) {
@@ -528,6 +583,14 @@ int parse_current_token() {
             token_list[idx].jmp = jmp;
         } break;
         case OP_LOOP: {
+            if (program.cur_proc.size == 0) {
+                char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+                sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+
             program.condition = 1;
             program.loop = 1;
             if (token_list[idx].operation == OP_DO) {
@@ -554,6 +617,15 @@ int parse_current_token() {
                 if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
                     char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
                     sprintf(msg, "trying to redefine var '%s'", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
+            for (size_t i = 0; i < program.proc_size; i++) {
+                if (strcmp(token_list[idx].val, program.proc_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine proc '%s' as var", token_list[idx].val);
                     program_error(msg, pos_list[idx]);
                     free(msg);
                     return 0;
@@ -740,6 +812,15 @@ int parse_current_token() {
                     return 0;
                 }
             }
+            for (size_t i = 0; i < program.proc_size; i++) {
+                if (strcmp(token_list[idx].val, program.proc_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine proc '%s' as const", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
             char *name = token_list[idx].val;
             // get var type
             program.idx++;
@@ -916,6 +997,52 @@ int parse_current_token() {
             program.const_def = 1;
             program.cur_var = program.var_size - 1;
         } break;
+        case OP_CREATE_PROC: {
+            if (program.cur_proc.size != 0) {
+                program_error("trying to define a procedure inside a procedure", pos_list[idx-1]);
+                return 0;
+            }
+            // get proc name
+            idx = program.idx + 1;
+            if (program.token_size == program.idx) {
+                program_error("procedure definition is invalid", pos_list[idx-1]);
+                return 0;
+            }
+            if (token_list[idx].type != TKN_ID) {
+                char *msg = malloc(sizeof(char) * ((strlen(token_list[idx].val) * 2) + strlen(token_name[token_list[idx].type]) + 50));
+                sprintf(msg, "trying to define proc '%s', but '%s' is %s", token_list[idx].val, token_list[idx].val, token_name[token_list[idx].type]);
+                program_error(msg, pos_list[idx]);
+                free(msg);
+                return 0;
+            }
+            for (size_t i = 0; i < program.var_size; i++) {
+                if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine var '%s' as proc", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
+            for (size_t i = 0; i < program.proc_size; i++) {
+                if (strcmp(token_list[idx].val, program.proc_list[i].name) == 0) {
+                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                    sprintf(msg, "trying to redefine proc '%s'", token_list[idx].val);
+                    program_error(msg, pos_list[idx]);
+                    free(msg);
+                    return 0;
+                }
+            }
+            char *name = token_list[idx].val;
+            if (strcmp(name, "main") == 0) {
+                program.has_main = 1;
+            }
+            proc_t proc;
+            proc = proc_create(name);
+            program_add_proc(proc);
+            stack_push(&program.cur_proc, program.proc_size - 1);
+            program.proc_def = 1;
+        } break;
         case OP_END: {
             size_t end_count = 0;
             int found_open = 0;
@@ -923,12 +1050,12 @@ int parse_current_token() {
                 if (token_list[i].type != TKN_KEYWORD) continue;
                 if (idx == 0 || (long)i < 0) break;
                 if (token_list[i].operation == OP_END) end_count++;
-                if ((token_list[i].operation == OP_IF  && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR) {
+                if ((token_list[i].operation == OP_IF  && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR || token_list[i].operation == OP_CREATE_PROC) {
                     if (end_count > 0) {
                         end_count--;
                     } else {
                         found_open = 1;
-                        program.condition = token_list[i].operation != OP_CREATE_VAR;
+                        program.condition = token_list[i].operation != OP_CREATE_VAR && token_list[i].operation != OP_CREATE_PROC;
                         if (token_list[i].operation == OP_LOOP) {
                             program.loop = 1;
                             token_list[idx].jmp = i;
@@ -952,6 +1079,13 @@ int parse_current_token() {
         }
     } break;
     case TKN_INTRINSIC: {
+        if (program.cur_proc.size == 0 && (token_list[idx].operation != OP_PLUS && token_list[idx].operation != OP_MINUS && token_list[idx].operation != OP_MUL && token_list[idx].operation != OP_DIV && token_list[idx].operation != OP_MOD && token_list[idx].operation != OP_SHR && token_list[idx].operation != OP_SHL && token_list[idx].operation != OP_BAND && token_list[idx].operation != OP_BOR && token_list[idx].operation != OP_BNOT && token_list[idx].operation != OP_XOR)) {
+            char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+            sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+            program_error(msg, pos_list[idx]);
+            free(msg);
+            return 0;
+        }
         switch(token_list[idx].operation) {
         case OP_SIZEOF: {
             int find = 0;
@@ -1173,11 +1307,26 @@ int parse_current_token() {
     } break;
     case TKN_ID: {
         int find = 0;
-        
+        if (program.cur_proc.size == 0) {
+            char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+            sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+            program_error(msg, pos_list[idx]);
+            free(msg);
+            return 0;
+        }
+
         // find var
         for (size_t i = 0; i < program.var_size; i++) {
             if (strcmp(program.var_list[i].name, token_list[idx].val) == 0) {
                 token_list[idx].operation = OP_CALL_VAR;
+                find = 1;
+                break;
+            }
+        }
+        // find proc
+        for (size_t i = 0; i < program.proc_size; i++) {
+            if (strcmp(program.proc_list[i].name, token_list[idx].val) == 0) {
+                token_list[idx].operation = OP_CALL_PROC;
                 find = 1;
                 break;
             }
@@ -1195,6 +1344,15 @@ int parse_current_token() {
     case TKN_INT: {
         if (program.index)
             program.idx_amount++;
+    }
+    case TKN_STR: {
+        if (program.cur_proc.size == 0) {
+            char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
+            sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
+            program_error(msg, pos_list[idx]);
+            free(msg);
+            return 0;
+        }
     } break;
     default:
         break;
@@ -1238,14 +1396,23 @@ void program_init(int argc, char **argv) {
     program.str_alloc = 1;
     program.str_size = 0;
 
+    program.proc_list = malloc(sizeof(proc_t));
+    malloc_check(program.proc_list, "malloc(program.proc_list) in function program_init");
+    program.proc_alloc = 1;
+    program.proc_size = 0;
+
     program.condition = 0;
     program.setting = 0;
     program.address = 0;
     program.loop = 0;
     program.error = 0;
     program.const_def = 0;
-    program.size_of = 0;
+    program.proc_def = 0;
     program.has_malloc = 0;
+    program.has_main = 0;
+    program.size_of = 0;
+
+    program.cur_proc = stack_create();
 
     program_add_vartype(vartype_create("byte", sizeof(char), 1));
     program_add_vartype(vartype_create("short", sizeof(short), 1));
@@ -1433,7 +1600,6 @@ void generate_assembly_x86_64_linux() {
     if (program.has_malloc) {
         fprintf(output, "extern malloc, free\n");
     }
-    fprintf(output, "global main\n");
     fprintf(output, "_print:\n");
     fprintf(output, "    mov rsi,rsp\n");
     fprintf(output, "    sub rsp,32\n");
@@ -1466,7 +1632,6 @@ void generate_assembly_x86_64_linux() {
     fprintf(output, "    add rsp,32\n");
     fprintf(output, "    ret\n");
 
-    fprintf(output, "main:\n");
     while (parse_current_token(program)) {
         size_t idx = program.idx;
         switch (program.token_list[idx].operation) {
@@ -1929,6 +2094,19 @@ void generate_assembly_x86_64_linux() {
                 fprintf(output, "    push rbx\n");
             }
         } break;
+        case OP_CALL_PROC: {
+            fprintf(output, ";   call proc\n");
+            fprintf(output, "    call %s\n", program.token_list[idx].val);
+        } break;
+        case OP_CREATE_PROC: {
+            program.idx++;
+            if (program.has_main && strcmp(program.token_list[idx + 1].val, "main") == 0) {
+                fprintf(output, "global main\n");
+            }
+            fprintf(output, ";   create proc\n");
+            fprintf(output, "%s:\n", program.token_list[idx + 1].val);
+            fprintf(output, "    pop qword [$RET + %lu]\n", program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].adr);
+        } break;
         case OP_DO: {
             fprintf(output, ";   do\n");
             fprintf(output, "    pop rax\n");
@@ -2025,6 +2203,14 @@ void generate_assembly_x86_64_linux() {
                         break;
                     }
                 }
+            } else if (program.cur_proc.size != 0) {
+                proc_t proc = program.proc_list[stack_pop(&program.cur_proc)];
+                fprintf(output, ";   end proc\n");
+                if (strcmp(proc.name, "main") == 0) {
+                    fprintf(output, "    pop rax\n");
+                }
+                fprintf(output, "    push qword[$RET + %lu]\n", proc.adr);
+                fprintf(output, "    ret\n");
             }
         } break;
         default:
@@ -2035,9 +2221,6 @@ void generate_assembly_x86_64_linux() {
     if (program.error) {
         exit(1);
     }
-    fprintf(output, ";  exit program_code\n");
-    fprintf(output, "   xor rax,rax\n");
-    fprintf(output, "   ret\n");
     fprintf(output, "segment .bss\n");
     for (size_t i = 0; i < program.var_size; i++) {
         vartype_t l = program.vartype_list[program.var_list[i].type];
@@ -2061,6 +2244,9 @@ void generate_assembly_x86_64_linux() {
             }
         }
     }
+    if (program.proc_size > 0) {
+        fprintf(output, "$RET: resq %lu\n", program.proc_size);
+    }
     fprintf(output, "segment .data\n");
     for (size_t i = 0; i < program.str_size; i++) {
         str_t str = program.str_list[i];
@@ -2075,12 +2261,18 @@ void generate_assembly_x86_64_linux() {
         }
     }
 
+    if (!program.has_main) {
+        fprintf(stderr, "ERROR: program without a main entry point\n");
+        exit(1);
+    }
+
     fclose(output);
     system("nasm -felf64 output.asm -o output.o");
     system("gcc -no-pie -o output output.o");
 }
 
 void program_quit() {
+    stack_destroy(program.cur_proc);
     for (size_t i = 0; i < program.token_size; i++) {
         free(program.token_list[i].val);
     }
@@ -2094,6 +2286,8 @@ void program_quit() {
     free(program.token_list);
     free(program.vartype_list);
     free(program.var_list);
+    free(program.str_list);
+    free(program.proc_list);
 }
 
 int main(int argc, char **argv) {
