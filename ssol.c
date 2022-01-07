@@ -3,7 +3,9 @@
 #include <string.h>
 #include <assert.h>
 
-#define RET_STACK_CAP 4096
+#define RET_STACK_CAP 65536 // 64kb
+
+// TODO: some places might be broken because of the local variables
 
 typedef struct {
     char *file;
@@ -94,8 +96,9 @@ typedef struct {
     size_t type;
     int arr;
     size_t cap;
+    size_t adr;
     int constant;
-    // TODO: make the const_val be a list of unions for non primitive types
+    // TODO: make the const_val be just a size_t and make constants be from 'long' type automatically
     union {
         unsigned char b8;
         unsigned short b16;
@@ -112,6 +115,12 @@ typedef struct {
 
 typedef struct {
     char *name;
+    size_t adr;
+    size_t end;
+    var_t *var_list;
+    size_t var_alloc;
+    size_t var_size;
+    size_t local_var_capacity;
 } proc_t;
 
 typedef struct {
@@ -151,12 +160,14 @@ typedef struct {
     int index;
     int size_of;
     int proc_def;
+    int local_def;
+    int global_def;
     int has_malloc;
     int has_main;
     size_t idx_amount;
     size_t cur_var;
     size_t cur_vartype;
-    stack_t cur_proc;
+    stack_t cur_proc; // TODO: maybe this could be a size_t instead of a stack_t
 } program_t;
 
 program_t program;
@@ -213,6 +224,11 @@ str_t str_create(char *str_data, size_t adr) {
 proc_t proc_create(char *name) {
     proc_t proc;
     proc.name = name;
+    proc.adr = program.proc_size;
+    proc.var_list = malloc(sizeof(var_t));
+    proc.var_alloc = 1;
+    proc.var_size = 0;
+    proc.local_var_capacity = 0;
     return proc;
 }
 
@@ -277,6 +293,7 @@ var_t var_create(char *name, char *type_name, int arr, size_t cap) {
     var.arr = arr;
     var.cap = cap;
     var.constant = 0;
+    var.adr = program.var_size;
     return var;
 }
 
@@ -307,6 +324,16 @@ void program_add_var(var_t var) {
         program.var_list = realloc(program.var_list, sizeof(var_t ) *program.var_alloc);
     }
     program.var_list[program.var_size - 1] = var;
+}
+
+void program_add_local_var(var_t var) {
+    proc_t *proc = &(program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]]);
+    proc->var_size++;
+    if (proc->var_size >= proc->var_alloc) {
+        proc->var_alloc *= 2;
+        proc->var_list = realloc(proc->var_list, sizeof(var_t ) *proc->var_alloc);
+    }
+    proc->var_list[proc->var_size - 1] = var;
 }
 
 void program_add_str(str_t str) {
@@ -491,7 +518,7 @@ int parse_current_token() {
                 size_t if_count = 0;
                 for (size_t i = idx + 1; i < program.token_size; i++) {
                     if (token_list[i].type != TKN_KEYWORD) continue;
-                    if ((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP) if_count++;
+                    if ((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR ||  token_list[i].operation == OP_CREATE_CONST || token_list[i].operation == OP_CREATE_PROC) if_count++;
                     if (token_list[i].operation == OP_END) {
                         if (if_count > 0) {
                             if_count--;
@@ -549,7 +576,7 @@ int parse_current_token() {
             size_t if_count = 0;
             for (size_t i = idx + 1; i < program.token_size; i++) {
                 if (token_list[i].type != TKN_KEYWORD) continue;
-                if ((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) && i > idx + 1) if_count++;
+                if (((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) && i > idx + 1) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR||  token_list[i].operation == OP_CREATE_CONST || token_list[i].operation == OP_CREATE_PROC) if_count++;
                 if (token_list[i].operation == OP_END) {
                     if (if_count > 0) {
                         if_count--;
@@ -563,6 +590,7 @@ int parse_current_token() {
             for (size_t i = idx - 1; i >= 0; i--) {
                 if ((long)i < 0) break;
                 if (token_list[i].operation == OP_END) if_count++;
+                if (token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR||  token_list[i].operation == OP_CREATE_CONST || token_list[i].operation == OP_CREATE_PROC) if_count--;
                 if (token_list[i].operation == OP_IF && (i == 0 || token_list[i].operation != OP_ELSE)) {
                     if (if_count > 0) {
                         if_count--;
@@ -613,13 +641,25 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
-            for (size_t i = 0; i < program.var_size; i++) {
-                if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
-                    char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
-                    sprintf(msg, "trying to redefine var '%s'", token_list[idx].val);
-                    program_error(msg, pos_list[idx]);
-                    free(msg);
-                    return 0;
+            if (program.cur_proc.size == 0) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(token_list[idx].val, program.var_list[i].name) == 0) {
+                        char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                        sprintf(msg, "trying to redefine var '%s'", token_list[idx].val);
+                        program_error(msg, pos_list[idx]);
+                        free(msg);
+                        return 0;
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                    if (strcmp(token_list[idx].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                        char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 30)));
+                        sprintf(msg, "trying to redefine var '%s'", token_list[idx].val);
+                        program_error(msg, pos_list[idx]);
+                        free(msg);
+                        return 0;
+                    }
                 }
             }
             for (size_t i = 0; i < program.proc_size; i++) {
@@ -715,6 +755,22 @@ int parse_current_token() {
                         size_t a = stack_pop(&stack);
                         stack_push(&stack, a ^ b);
                     } break;
+                    case OP_SIZEOF: {
+                        vartype_t vt;
+                        int find_vt = 0;
+                        for (size_t j = 0; j < program.vartype_size; j++) {
+                            if (strcmp(token_list[i + 1].val, program.vartype_list[j].name) == 0) {
+                                find_vt = 1;
+                                vt = program.vartype_list[j];
+                                break;
+                            }
+                        }
+                        if (find_vt) {
+                            stack_push(&stack, vt.size_bytes);
+                        } else {
+                            invalid = 1;
+                        }
+                    } break;
                     default: {
                         invalid = 1;
                     } break;
@@ -782,14 +838,36 @@ int parse_current_token() {
                 free(msg);
                 return 0;
             }
-            program_add_var(var);
-            program.idx = end - 1;
-            if (program.setting) {
-                program.cur_var = program.var_size - 1;
+            if (program.cur_proc.size == 0) {
+                program_add_var(var);
+                if (program.setting) {
+                    program.cur_var = program.var_size - 1;
+                }
+                program.global_def = 1;
+            } else {
+                program_add_local_var(var);
+                proc_t *proc = &(program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]]); 
+                var_t *v = &(proc->var_list[proc->var_size - 1]);
+                size_t add_offset = program.vartype_list[v->type].size_bytes;
+                if (v->arr) {
+                    add_offset *= v->cap;
+                }
+                v->adr = 0;
+                for (size_t i = 0; i < proc->var_size; i++) {
+                    proc->var_list[i].adr += add_offset;
+                }
+                proc->local_var_capacity += add_offset;
+                program.cur_var = proc->var_size - 1;
+                program.local_def = 1;
             }
+            program.idx = end - 1;
         } break;
         case OP_CREATE_CONST: {
             // get var name
+            if (program.cur_proc.size != 0) {
+                program_error("can't define a constant inside a procedure", pos_list[idx-1]);
+                return 0;
+            }
             program.idx++;
             idx = program.idx;
             if (program.token_size == program.idx) {
@@ -906,6 +984,23 @@ int parse_current_token() {
                         size_t a = stack_pop(&stack);
                         stack_push(&stack, a ^ b);
                     } break;
+                    case OP_SIZEOF: {
+                        vartype_t vt;
+                        int find_vt = 0;
+                        for (size_t j = 0; j < program.vartype_size; j++) {
+                            if (strcmp(token_list[i + 1].val, program.vartype_list[j].name) == 0) {
+                                find_vt = 1;
+                                vt = program.vartype_list[j];
+                                break;
+                            }
+                        }
+                        if (find_vt) {
+                            stack_push(&stack, vt.size_bytes);
+                            i++;
+                        } else {
+                            invalid = 1;
+                        }
+                    } break;
                     default: {
                         invalid = 1;
                     } break;
@@ -997,6 +1092,7 @@ int parse_current_token() {
             program.cur_var = program.var_size - 1;
         } break;
         case OP_CREATE_PROC: {
+            
             if (program.cur_proc.size != 0) {
                 program_error("trying to define a procedure inside a procedure", pos_list[idx-1]);
                 return 0;
@@ -1036,11 +1132,29 @@ int parse_current_token() {
             if (strcmp(name, "main") == 0) {
                 program.has_main = 1;
             }
-            proc_t proc;
-            proc = proc_create(name);
+            proc_t proc = proc_create(name);
             program_add_proc(proc);
             stack_push(&program.cur_proc, program.proc_size - 1);
             program.proc_def = 1;
+            size_t end = 0;
+            size_t end_count = 0;
+            for (size_t i = idx + 1; i < program.token_size; i++) {
+                if (token_list[i].type != TKN_KEYWORD) continue;
+                if ((token_list[i].operation == OP_IF && token_list[i - 1].operation != OP_ELSE) || token_list[i].operation == OP_LOOP || token_list[i].operation == OP_CREATE_VAR ||  token_list[i].operation == OP_CREATE_CONST || token_list[i].operation == OP_CREATE_PROC) end_count++;
+                if (token_list[i].operation == OP_END) {
+                    if (end_count > 0) {
+                        end_count--;
+                    } else {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+            if (end == 0) {
+                program_error("proc without a end", pos_list[idx]);
+                return 0;
+            }
+            //program.proc_list[program.proc_size - 1].end = end;
         } break;
         case OP_END: {
             size_t end_count = 0;
@@ -1095,6 +1209,12 @@ int parse_current_token() {
                         break;
                     }
                 }
+                for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                        find = 1;
+                        break;
+                    }
+                }
             }
             if (find) {
                 program.size_of = 1;
@@ -1126,11 +1246,21 @@ int parse_current_token() {
             int find = 0;
             var_t var = {0};
             if (token_list[idx + 1].type == TKN_ID) {
-                for (size_t i = 0; i < program.var_size; i++) {
-                    if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
-                        find = 1;
-                        var = program.var_list[i];
-                        break;
+                if (program.cur_proc.size == 0) {
+                    for (size_t i = 0; i < program.var_size; i++) {
+                        if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
+                            find = 1;
+                            var = program.var_list[i];
+                            break;
+                        }
+                    }
+                } else {
+                    for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                        if (strcmp(token_list[idx + 1].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                            find = 1;
+                            var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
+                            break;
+                        }
                     }
                 }
             } else if (token_list[idx + 1].operation == OP_CREATE_VAR) {
@@ -1154,11 +1284,19 @@ int parse_current_token() {
         case OP_SET_VAR: {
             int find = 0;
             var_t var = {0};
+
             if (token_list[idx + 1].type == TKN_ID) {
                 for (size_t i = 0; i < program.var_size; i++) {
                     if (strcmp(token_list[idx + 1].val, program.var_list[i].name) == 0) {
                         find = 1;
                         var = program.var_list[i];
+                        break;
+                        }
+                }
+                for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                    if (strcmp(token_list[idx + 1].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                        find = 1;
+                        var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
                         break;
                     }
                 }
@@ -1197,6 +1335,14 @@ int parse_current_token() {
                             program.cur_var = i;
                             find = 1;
                             var = program.var_list[i];
+                            break;
+                            }
+                    }
+                    for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                        if (strcmp(token_list[idx - 1].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                            program.cur_var = i;
+                            find = 1;
+                            var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
                             break;
                         }
                     }
@@ -1258,6 +1404,14 @@ int parse_current_token() {
                         find = 1;
                         var = program.var_list[i];
                         break;
+                        }
+                }
+                for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                    if (strcmp(token_list[idx - 1].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                        program.cur_var = i;
+                        find = 1;
+                        var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
+                        break;
                     }
                 }
             }
@@ -1306,6 +1460,7 @@ int parse_current_token() {
     } break;
     case TKN_ID: {
         int find = 0;
+
         if (program.cur_proc.size == 0) {
             char *msg = malloc(sizeof(char) * (strlen(token_list[idx].val + 40)));
             sprintf(msg, "'%s' can only be used in a procedure", token_list[idx].val);
@@ -1313,7 +1468,6 @@ int parse_current_token() {
             free(msg);
             return 0;
         }
-
         // find var
         for (size_t i = 0; i < program.var_size; i++) {
             if (strcmp(program.var_list[i].name, token_list[idx].val) == 0) {
@@ -1322,10 +1476,19 @@ int parse_current_token() {
                 break;
             }
         }
+        for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+            if (strcmp(token_list[idx].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name)==0) {
+                token_list[idx].operation = OP_CALL_VAR;
+                find = 1;
+                break;
+            }
+        }
+
         // find proc
         for (size_t i = 0; i < program.proc_size; i++) {
             if (strcmp(program.proc_list[i].name, token_list[idx].val) == 0) {
                 token_list[idx].operation = OP_CALL_PROC;
+                stack_push(&program.cur_proc, program.proc_list[i].adr);
                 find = 1;
                 break;
             }
@@ -1409,6 +1572,8 @@ void program_init(int argc, char **argv) {
     program.has_malloc = 0;
     program.has_main = 0;
     program.size_of = 0;
+    program.local_def = 0;
+    program.global_def = 0;
 
     program.cur_proc = stack_create();
 
@@ -1813,9 +1978,26 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    pop rax\n");
         } break;
         case OP_CAP: {
+            int local = 0;
+            var_t var;
+            for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                if (strcmp(program.token_list[idx].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                    local = 1;
+                    var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
+                    break;
+                }
+            }
+            if (!local) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(program.token_list[idx].val, program.var_list[i].name) == 0) {
+                        var = program.var_list[i];
+                        break;
+                    }
+                }
+            }
             fprintf(output, ";   cap\n");
             fprintf(output, "    pop rax\n");
-            fprintf(output, "    push %lu\n", program.var_list[program.cur_var].cap);
+            fprintf(output, "    push %lu\n", var.cap);
         } break;
         case OP_SYSCALL0: {
             fprintf(output, ";   syscall\n");
@@ -1946,51 +2128,87 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    push rcx\n");
         } break;
         case OP_DELETE: {
-                fprintf(output, ";   delete memory\n");
-                fprintf(output, "    pop rdi\n");
-                fprintf(output, "    call free WRT ..plt\n");
+            fprintf(output, ";   delete memory\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    call free WRT ..plt\n");
         } break;
         case OP_MEMORY: {
-                fprintf(output, ";   memory allocation\n");
-                fprintf(output, "    pop rdi\n");
-                fprintf(output, "    call malloc WRT ..plt\n");
-                fprintf(output, "    push rax\n");
+            fprintf(output, ";   memory allocation\n");
+            fprintf(output, "    pop rdi\n");
+            fprintf(output, "    call malloc WRT ..plt\n");
+            fprintf(output, "    push rax\n");
         } break;
         case OP_CALL_VAR: { 
+            int local = 0;
             vartype_t l;
             var_t var;
-            for (size_t i = 0; i < program.var_size; i++) {
-                if (strcmp(program.token_list[idx].val, program.var_list[i].name) == 0) {
-                    l = program.vartype_list[program.var_list[i].type];
-                    var = program.var_list[i];
+            for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                if (strcmp(program.token_list[idx].val, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                    local = 1;
+                    var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
+                    l = program.vartype_list[var.type];
                     break;
                 }
             }
+            if (!local) {
+                for (size_t i = 0; i < program.var_size; i++) {
+                    if (strcmp(program.token_list[idx].val, program.var_list[i].name) == 0) {
+                        l = program.vartype_list[program.var_list[i].type];
+                        var = program.var_list[i];
+                        break;
+                    }
+                }
+            }
+
             // TODO: for now 'set var' and 'get var' just supports primitive types
             if (program.setting && !var.arr && !program.index) { // set var value
                 program.setting=0;
                 fprintf(output, ";   set var value\n");
                 fprintf(output, "    pop rax\n");
                 if (l.primitive) {
-                    switch (l.size_bytes) {
-                    case sizeof(char):
-                        fprintf(output, "    mov byte [%s],al\n", program.token_list[idx].val);
-                        break;
-                    case sizeof(short):
-                        fprintf(output, "    mov word [%s],ax\n", program.token_list[idx].val);
-                        break;
-                    case sizeof(int):
-                        fprintf(output, "    mov dword [%s],eax\n", program.token_list[idx].val);
-                        break;
-                    case sizeof(long):
-                        fprintf(output, "    mov qword [%s],rax\n", program.token_list[idx].val);
-                        break;
+                    if (!local) {
+                        switch (l.size_bytes) {
+                        case sizeof(char):
+                            fprintf(output, "    mov byte [$VAR%lu],al\n", var.adr);
+                            break;
+                        case sizeof(short):
+                            fprintf(output, "    mov word [$VAR%lu],ax\n", var.adr);
+                            break;
+                        case sizeof(int):
+                            fprintf(output, "    mov dword [$VAR%lu],eax\n", var.adr);
+                            break;
+                        case sizeof(long):
+                            fprintf(output, "    mov qword [$VAR%lu],rax\n", var.adr);
+                            break;
+                        }
+                    } else {
+                        fprintf(output, "    mov rbx,qword [$RETP]\n");
+                        switch (l.size_bytes) {
+                        case sizeof(char):
+                            fprintf(output, "    mov byte [rbx - %lu],al\n", var.adr);
+                            break;
+                        case sizeof(short):
+                            fprintf(output, "    mov word [rbx - %lu],ax\n", var.adr);
+                            break;
+                        case sizeof(int):
+                            fprintf(output, "    mov dword [rbx - %lu],eax\n", var.adr);
+                            break;
+                        case sizeof(long):
+                            fprintf(output, "    mov qword [rbx - %lu],rax\n", var.adr);
+                            break;
+                        }
                     }
                 }
             } else if (program.address && !program.index && program.token_list[idx + 1].operation != OP_START_INDEX) { // get address
                 program.address = 0;
                 fprintf(output, ";   get var address\n");
-                fprintf(output, "    mov rax,%s\n", program.token_list[idx].val);
+                if (!local) {
+                    fprintf(output, "    mov rax,$VAR%lu\n", var.adr);
+                } else {
+                    fprintf(output, "    mov rbx,qword [$RETP]\n");
+                    fprintf(output, "    sub rbx,%lu\n", var.adr);
+                    fprintf(output, "    mov rax,rbx\n");
+                }
                 fprintf(output, "    push rax\n");
             } else if (program.size_of && !program.index ) { // sizeof var
                 program.size_of = 0;
@@ -2009,33 +2227,64 @@ void generate_assembly_x86_64_linux() {
                     if (!var.constant) {
                         fprintf(output, "    xor rax,rax\n");
                         if (!var.arr) {
-                            switch (l.size_bytes) {
-                            case sizeof(char):
-                                fprintf(output, "    mov al,byte [%s]\n", program.token_list[idx].val);
-                                break;
-                            case sizeof(short):
-                                fprintf(output, "    mov ax,word [%s]\n", program.token_list[idx].val);
-                                break;
-                            case sizeof(int):
-                                fprintf(output, "    mov eax,dword [%s]\n", program.token_list[idx].val);
-                                break;
-                            case sizeof(long):
-                                fprintf(output, "    mov rax,qword [%s]\n", program.token_list[idx].val);
-                                break;
+                            if (!local) {
+                                switch (l.size_bytes) {
+                                case sizeof(char):
+                                    fprintf(output, "    mov al,byte [$VAR%lu]\n", var.adr);
+                                    break;
+                                case sizeof(short):
+                                    fprintf(output, "    mov ax,word [$VAR%lu]\n", var.adr);
+                                    break;
+                                case sizeof(int):
+                                    fprintf(output, "    mov eax,dword [$VAR%lu]\n", var.adr);
+                                    break;
+                                case sizeof(long):
+                                    fprintf(output, "    mov rax,qword [$VAR%lu]\n", var.adr);
+                                    break;
+                                }
+                            } else {
+                                fprintf(output, "    mov rbx,qword [$RETP]\n");
+                                switch (l.size_bytes) {
+                                case sizeof(char):
+                                    fprintf(output, "    mov al,byte [rbx - %lu]\n", var.adr);
+                                    break;
+                                case sizeof(short):
+                                    fprintf(output, "    mov ax,word [rbx - %lu]\n", var.adr);
+                                    break;
+                                case sizeof(int):
+                                    fprintf(output, "    mov eax,dword [rbx - %lu]\n", var.adr);
+                                    break;
+                                case sizeof(long):
+                                    fprintf(output, "    mov rax,qword [rbx - %lu]\n", var.adr);
+                                    break;
+                                }
                             }
                         } else {
-                            fprintf(output, "    mov rax, %s\n", program.token_list[idx].val);
+                            if (!local) {
+                                fprintf(output, "    mov rax, $VAR%lu\n", var.adr);
+                            } else {
+                                fprintf(output, "    mov rbx,qword [$RETP]\n");
+                                fprintf(output, "    sub rbx,%lu\n", var.adr);
+                                fprintf(output, "    mov rax,rbx\n");
+                            }
                         }
                         fprintf(output, "    push rax\n");
                     } else {
-                        fprintf(output, "    push %s\n", var.name);
+                        fprintf(output, "    push $VAR%lu\n", var.adr);
                     }
                 }
             }
         } break;
         case OP_END_INDEX: {
             program.index = 0;
-            vartype_t l = program.vartype_list[program.var_list[program.cur_var].type];
+            var_t var = program.var_list[program.cur_var];
+            for (size_t i = 0; i < program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_size; i++) {
+                if (strcmp(var.name, program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i].name) == 0) {
+                    var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[i];
+                    break;
+                }
+            }
+            vartype_t l = program.vartype_list[var.type];
             if (program.setting) {
                 program.setting = 0;
                 fprintf(output, ";   set array value\n");
@@ -2099,7 +2348,11 @@ void generate_assembly_x86_64_linux() {
         } break;
         case OP_CALL_PROC: {
             fprintf(output, ";   call proc\n");
-            fprintf(output, "    call %s\n", program.token_list[idx].val);
+            if (strcmp(program.token_list[idx].val, "main") == 0) {
+                fprintf(output, "    call main\n");
+            } else {
+                fprintf(output, "    call $PROC%lu\n", stack_pop(&program.cur_proc));
+            }
         } break;
         case OP_CREATE_PROC: {
             program.idx++;
@@ -2108,13 +2361,15 @@ void generate_assembly_x86_64_linux() {
                 fprintf(output, "global main\n");
             }
             fprintf(output, ";   create proc\n");
-            fprintf(output, "%s:\n", program.token_list[idx + 1].val);
             if (is_main) {
+                fprintf(output, "main:\n");
                 fprintf(output, "    mov qword [$RETP], $RET\n");
+            } else {
+                fprintf(output, "$PROC%lu:\n", program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].adr);
             }
-            fprintf(output, "    add qword [$RETP],8\n");
             fprintf(output, "    mov rax,qword [$RETP]\n");
             fprintf(output, "    pop qword [rax]\n");
+            fprintf(output, "    add qword [$RETP],8\n");
         } break;
         case OP_DO: {
             fprintf(output, ";   do\n");
@@ -2141,26 +2396,58 @@ void generate_assembly_x86_64_linux() {
                 }
                 fprintf(output, "$ADR%lu:\n", program.idx);
             } else if (program.setting) {
-                var_t var = program.var_list[program.cur_var];
+                var_t var;
+                int local = 0;
+                if (program.local_def) {
+                    program.local_def = 0;
+                    local = 1;
+                    var_t var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[program.cur_var];
+                    fprintf(output, ";   create local varible\n");
+                    if (!var.arr) {
+                        fprintf(output, "    add qword [$RETP],%lu\n", program.vartype_list[var.type].size_bytes);
+                    } else {
+                        fprintf(output, "    add qword [$RETP],%lu\n", program.vartype_list[var.type].size_bytes * var.cap);
+                    }
+                } else if (program.global_def) {
+                    var = program.var_list[program.cur_var];
+                }
                 vartype_t l = program.vartype_list[var.type];
                 program.setting=0;
                 if (!var.arr) {
                     fprintf(output, ";   set var value\n");
                     fprintf(output, "    pop rax\n");
                     if (l.primitive) {
-                        switch (l.size_bytes) {
-                        case sizeof(char):
-                            fprintf(output, "    mov byte [%s],al\n", var.name);
-                            break;
-                        case sizeof(short):
-                            fprintf(output, "    mov word [%s],ax\n", var.name);
-                            break;
-                        case sizeof(int):
-                            fprintf(output, "    mov dword [%s],eax\n", var.name);
-                            break;
-                        case sizeof(long):
-                            fprintf(output, "    mov qword [%s],rax\n", var.name);
-                            break;
+                        if (!local) {
+                            switch (l.size_bytes) {
+                            case sizeof(char):
+                                fprintf(output, "    mov byte [$VAR%lu],al\n", var.adr);
+                                break;
+                            case sizeof(short):
+                                fprintf(output, "    mov word [$VAR%lu],ax\n", var.adr);
+                                break;
+                            case sizeof(int):
+                                fprintf(output, "    mov dword [$VAR%lu],eax\n", var.adr);
+                                break;
+                            case sizeof(long):
+                                fprintf(output, "    mov qword [$VAR%lu],rax\n", var.adr);
+                                break;
+                            }
+                        } else {
+                            fprintf(output, "    mov rbx,qword [$RETP]\n");
+                            switch (l.size_bytes) {
+                            case sizeof(char):
+                                fprintf(output, "    mov byte [rbx - %lu],al\n", var.adr);
+                                break;
+                            case sizeof(short):
+                                fprintf(output, "    mov word [rbx - %lu],ax\n", var.adr);
+                                break;
+                            case sizeof(int):
+                                fprintf(output, "    mov dword [rbx - %lu],eax\n", var.adr);
+                                break;
+                            case sizeof(long):
+                                fprintf(output, "    mov qword [rbx - %lu],rax\n", var.adr);
+                                break;
+                            }
                         }
                     }
                 } else {
@@ -2170,7 +2457,13 @@ void generate_assembly_x86_64_linux() {
                     fprintf(output, "    mov rax,rcx\n");
                     fprintf(output, "    mov rdx,%lu\n", l.size_bytes);
                     fprintf(output, "    mul rdx\n");
-                    fprintf(output, "    lea rax,[%s + rax]\n", var.name);
+                    if (!local) {
+                        fprintf(output, "    lea rax,[$VAR%lu + rax]\n", var.adr);
+                    } else {
+                        // TODO: maybe a bug
+                        fprintf(output, "    mov rdx,qword [RETP - %lu]\n", var.adr);
+                        fprintf(output, "    lea rax,[rdx + rax]\n");
+                    }
                     fprintf(output, "    pop rbx\n");
                     if (l.primitive) {
                        switch (l.size_bytes) {
@@ -2192,13 +2485,28 @@ void generate_assembly_x86_64_linux() {
                     fprintf(output, "    cmp rcx,0\n");
                     fprintf(output, "    jge $ADR%lu\n", program.idx);
                 }
+            } else if (program.global_def) {
+                program.global_def = 0;
+            } else if (program.local_def) {
+                program.local_def = 0;
+                var_t var = program.proc_list[program.cur_proc.stack[program.cur_proc.size - 1]].var_list[program.cur_var];
+                fprintf(output, ";   create local varible\n");
+                if (!var.arr) {
+                    fprintf(output, "    add qword [$RETP],%lu\n", program.vartype_list[var.type].size_bytes);
+                } else {
+                    fprintf(output, "    add qword [$RETP],%lu\n", program.vartype_list[var.type].size_bytes * var.cap);
+                }
             } else if (program.cur_proc.size != 0) {
-                proc_t proc = program.proc_list[stack_pop(&program.cur_proc)];
+                proc_t *proc = &(program.proc_list[stack_pop(&program.cur_proc)]);
+                for (size_t i = 0; i < proc->var_size; i++) {
+                    free(proc->var_list[i].name);
+                }
+                proc->var_size = 0;
                 fprintf(output, ";   end proc\n");
+                fprintf(output, "    sub qword [$RETP],%lu\n", proc->local_var_capacity + 8);
                 fprintf(output, "    mov rax,qword [$RETP]\n");
                 fprintf(output, "    push qword [rax]\n");
-                fprintf(output, "    sub qword [$RETP],8\n");
-                if (strcmp(proc.name, "main") == 0) {
+                if (strcmp(proc->name, "main") == 0) {
                     fprintf(output, "    xor rax,rax\n");
                 }
                 fprintf(output, "    ret\n");
@@ -2220,16 +2528,16 @@ void generate_assembly_x86_64_linux() {
         if (l.primitive) {
             switch (l.size_bytes) {
             case sizeof(char):
-                fprintf(output, "%s: resb %lu\n", program.var_list[i].name, alloc);
+                fprintf(output, "$VAR%lu: resb %lu\n", program.var_list[i].adr, alloc);
                 break;
             case sizeof(short):
-                fprintf(output, "%s: resw %lu\n", program.var_list[i].name, alloc);
+                fprintf(output, "$VAR%lu: resw %lu\n", program.var_list[i].adr, alloc);
                 break;
             case sizeof(int):
-                fprintf(output, "%s: resd %lu\n", program.var_list[i].name, alloc);
+                fprintf(output, "$VAR%lu: resd %lu\n", program.var_list[i].adr, alloc);
                 break;
             case sizeof(long):
-                fprintf(output, "%s: resq %lu\n", program.var_list[i].name, alloc);
+                fprintf(output, "$VAR%lu: resq %lu\n", program.var_list[i].adr, alloc);
                 break;
             default:
                 break;
@@ -2257,16 +2565,16 @@ void generate_assembly_x86_64_linux() {
         if (l.primitive) {
             switch (l.size_bytes) {
             case sizeof(char):
-                fprintf(output, "%s: equ %d\n", program.var_list[i].name, program.var_list[i].const_val.b8);
+                fprintf(output, "$VAR%lu: equ %d\n", program.var_list[i].adr, program.var_list[i].const_val.b8);
                 break;
             case sizeof(short):
-                fprintf(output, "%s: equ %d\n", program.var_list[i].name, program.var_list[i].const_val.b16);
+                fprintf(output, "$VAR%lu: equ %d\n", program.var_list[i].adr, program.var_list[i].const_val.b16);
                 break;
             case sizeof(int):
-                fprintf(output, "%s: equ %u\n", program.var_list[i].name, program.var_list[i].const_val.b32);
+                fprintf(output, "$VAR%lu: equ %u\n", program.var_list[i].adr, program.var_list[i].const_val.b32);
                 break;
             case sizeof(long):
-                fprintf(output, "%s: equ %lu\n", program.var_list[i].name, program.var_list[i].const_val.b64);
+                fprintf(output, "$VAR%lu: equ %lu\n", program.var_list[i].adr, program.var_list[i].const_val.b64);
                 break;
             default:
                 break;
@@ -2280,7 +2588,7 @@ void generate_assembly_x86_64_linux() {
     }
 
     fclose(output);
-    system("nasm -felf64 output.asm -o output.o");
+    system("nasm -felf64 -g output.asm -o output.o");
     system("gcc -no-pie -o output output.o");
 }
 
@@ -2294,6 +2602,9 @@ void program_quit() {
     }
     for (size_t i = 0; i < program.var_size; i++) {
         free(program.var_list[i].name);
+    }
+    for (size_t i = 0; i < program.proc_size; i++) {
+        free(program.proc_list[i].var_list);
     }
     free(program.pos_list);
     free(program.token_list);

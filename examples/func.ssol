@@ -1,8 +1,11 @@
 # currently dont work
 
-function make_grid (rows int cols int) -> ptr do
+proc make_grid(rows int cols int) -> ptr do
     memory cols rows * end = var arr2d ptr end
     arr2d
 end
 
-10 20 make_grid = var grid ptr end
+// main will accept a list of strings instead of argc and argv
+proc main(list_t<str> args) do
+    10 20 make_grid = var grid ptr end
+end

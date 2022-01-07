@@ -1,0 +1,32 @@
+const person.age       int 0                              end
+const person.name.size int person.age sizeof int +        end
+const person.name.data int person.name.size sizeof long + end
+const sizeof-person    int person.name.data sizeof ptr +  end
+proc person.create
+    sizeof-person memory = var person ptr end
+    person person.age       + swap !int
+    person person.name.data + swap !ptr
+    person person.name.size + swap !long
+
+    person
+end
+proc person.introduce
+    =  var person ptr end
+    "Hi, my name is " 1 1 syscall3 drop
+    person person.name.size person person.name.data + @ptr 1 1 syscall3 drop
+    ", and i'm " 1 1 syscall3 drop
+    person person.age + @int print
+end
+proc main
+    "John"    19 person.create = var john    ptr end
+    "Emily"   26 person.create = var emily   ptr end
+    "Richard" 13 person.create = var richard ptr end
+
+    john    person.introduce
+    emily   person.introduce
+    richard person.introduce
+
+    john    delete
+    emily   delete
+    richard delete
+end
