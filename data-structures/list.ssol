@@ -1,0 +1,96 @@
+const list.count   int 0                          end
+const list.alloc   int list.count sizeof long   + end
+const list.type    int list.alloc sizeof long   + end
+const list.is-prim int list.type  sizeof long   + end
+const sizeof-list  int list.is-prim sizeof byte + end
+
+proc list-create
+    = var is-prim byte end
+    = var type long end
+    sizeof-list type + memory = var list-head ptr end
+    list-head list.type + type !long
+    list-head list.is-prim + is-prim !byte
+    list-head list.count + 0 !long
+    list-head list.alloc + 1 !long
+    list-head sizeof-list +
+end
+
+proc list-idx
+    = var idx long end
+    = var list ptr end
+    list sizeof-list - = var list-head ptr end
+    list idx list-head list.type + @long * +
+end
+
+proc list-push
+    = var val ptr end
+    = var list-adr ptr end
+    var list-nxt-head ptr end
+    var list-head-size long end
+    list-adr @ptr sizeof-list - = var list-head ptr end
+    list-head list.count + dup dup @long 1 + !long
+    if @long list-head list.alloc + @long > do
+        list-head list.count + @long list-head list.type + @long * sizeof-list + = list-head-size
+        list-head list.alloc + dup dup @long 2 * !long
+        @long list-head list.type + @long * sizeof-list + memory = list-nxt-head
+        0 loop dup list-head-size < do
+            dup dup list-nxt-head + swap list-head + @byte !byte
+            1 +
+        end drop
+        list-head delete
+        list-nxt-head = list-head
+    end
+    list-head sizeof-list + = var list ptr end
+    0 loop dup list-head list.type + @long < do
+        if list-head list.is-prim + @byte do
+            dup dup list list-head list.count + @long 1 - list-idx swap + swap $val + @byte !byte
+        else
+            dup dup list list-head list.count + @long 1 - list-idx swap + swap val + @byte !byte
+        end
+        1 +
+    end drop
+    list-adr list !ptr
+end
+
+proc list-size
+    sizeof-list - list.count + @long
+end
+
+proc list-pop
+    sizeof-list - = var list-head ptr end
+    list-head list.count + dup @long 1 - !long
+end
+
+proc list-destroy
+    sizeof-list - delete
+end
+
+
+const test.a int 0 end
+const test.b int test.a sizeof int + end
+const sizeof-test int test.b sizeof short + end
+
+proc main
+    sizeof-test 0 list-create = var test-list ptr end
+    var test byte sizeof-test end
+    test test.a + 69 !int
+    test test.b + 3030 !short
+    $test-list test list-push
+    test test.a + 420 !int
+    test test.b + 10 !short
+    $test-list test list-push
+    test test.a + 32 !int
+    test test.b + 64 !short
+    $test-list test list-push
+    
+    test-list 0 list-idx test.a + @int print
+    test-list 0 list-idx test.b + @short print
+    "\n" 1 1 syscall3 drop
+    test-list 1 list-idx test.a + @int print
+    test-list 1 list-idx test.b + @short print
+    "\n" 1 1 syscall3 drop
+    test-list 2 list-idx test.a + @int print
+    test-list 2 list-idx test.b + @short print
+
+    test-list list-destroy
+end

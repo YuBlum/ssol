@@ -1,5 +1,5 @@
-var acc int end
 proc main
+    var acc int end
     0 1 loop dup 4000000 < do
         dup rot +
         if dup 2 % 0 == do

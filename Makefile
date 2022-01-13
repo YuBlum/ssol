@@ -1,4 +1,4 @@
-FLAGS=-g -Wall
+FLAGS=-g -Wall 
 STD=-std=c99
 
 ssol: ssol.c
