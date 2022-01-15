@@ -62,6 +62,7 @@ typedef struct {
         OP_DUP,
         OP_SWAP,
         OP_ROT,
+        OP_OVER,
         OP_DROP,
         OP_CAP,
         OP_START_INDEX,
@@ -341,6 +342,8 @@ int lex_word_as_token(char *word, int is_str, size_t adr) {
         token_set(&program.tokens[idx], TKN_INTRINSIC, OP_SWAP, word);
     } else if (strcmp(word, "rot") == 0) {
         token_set(&program.tokens[idx], TKN_INTRINSIC, OP_ROT, word);
+    } else if (strcmp(word, "over") == 0) {
+        token_set(&program.tokens[idx], TKN_INTRINSIC, OP_OVER, word);
     } else if (strcmp(word, "drop") == 0) {
         token_set(&program.tokens[idx], TKN_INTRINSIC, OP_DROP, word);
     } else if (strcmp(word, "cap") == 0) {
@@ -1293,14 +1296,21 @@ int parse_current_token() {
                 program.idx_amount--;
             break;
         case OP_DUP:
+        case OP_OVER:
             if (program.index) {
                 if (program.idx_amount > 0) program.idx_amount--;
                 program.idx_amount+=2;
             }
             break;
         case OP_SWAP:
+            if (program.index && program.idx_amount == 0) {
+                program.idx_amount++;
+            }
+            break;
         case OP_ROT: // TODO: maybe this not work because rotate might need +2 to the program.idx_amount instead of +1
             if (program.index && program.idx_amount == 0) {
+                program.idx_amount+=2;
+            } else if (program.index && program.idx_amount == 1) {
                 program.idx_amount++;
             }
             break;
@@ -1413,7 +1423,7 @@ void program_init(int argc, char **argv) {
     vt = vartype_create("long", sizeof(long), 1);
     shput(program.types, vt.name, vt);
 
-    vt = vartype_create("ptr", sizeof(long), 1);
+    vt = vartype_create("ptr", sizeof(void *), 1);
     shput(program.types, vt.name, vt);
 
     char *word = malloc(sizeof(char));
@@ -1432,6 +1442,7 @@ void program_init(int argc, char **argv) {
     char nxt_char = fgetc(f);
 
     int is_str = 0;
+    int is_char = 0;
     int is_cmt = 0;
 
     while (cur_char != EOF) {
@@ -1441,13 +1452,14 @@ void program_init(int argc, char **argv) {
         col++;
         if (!is_cmt) {
             if (!is_str) {
-                if (cur_char == '"') {
+                if (cur_char == '"' || cur_char == '\'') {
                     is_str = 1;
                     str_line = line;
                     str_col = col_word;
+                    if (cur_char == '\'') is_char = 1;
                     continue;
                 }
-                if (cur_char == ' ' || cur_char == '"' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || cur_char == '!' || (cur_char == '/' && nxt_char == '/')) {
+                if (cur_char == ' ' || cur_char == '"' || cur_char == '\'' || cur_char == '\t' || cur_char == '\n' || cur_char == EOF || cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || (cur_char == '!' && nxt_char != '=') || (cur_char == '/' && nxt_char == '/')) {
                     if (word_size > 0) {
                         word[word_size] = '\0';
                         arrput(program.tokens, token_create());
@@ -1471,7 +1483,7 @@ void program_init(int argc, char **argv) {
                     } else {
                        col_word = col;
                     }
-                    if (cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || cur_char == '!') {
+                    if (cur_char == '[' || cur_char == ']' || cur_char == '$' || cur_char == '@' || (cur_char == '!' && nxt_char != '=')) {
                         word = realloc(word, sizeof(char) * 2);
                         word[0] = cur_char;
                         word[1] = '\0';
@@ -1496,20 +1508,36 @@ void program_init(int argc, char **argv) {
                 }
                 word[word_size - 1] = cur_char;
             } else {
-                if (cur_char == '"') {
+                if ((cur_char == '"' && !is_char) || (cur_char == '\'' && is_char)) {
                     is_str = 0;
-                    word[word_size] = '\0';
-                    size_t adr = 0;
-                    if (shgetp_null(program.strs, word) != NULL) {
-                        adr = shget(program.strs, word).adr;
+                    if (is_char) {
+                        is_char = 0;
+                        if (word_size != 1) {
+                            fprintf(stderr, "%s:%lu:%lu ERROR: invalid character: '%s'\n", argv[1], line, col, word);
+                            exit(1);
+                        }
+                        int c = word[0];
+                        free(word);
+                        word = malloc(sizeof(char) * 5);
+                        sprintf(word, "%d", c);
+
+                        arrput(program.tokens, token_create());
+                        arrput(program.positions, pos_create(argv[1], str_line, str_col));
+                        lex_word_as_token(word, 0, 0);
+                    } else {
+                        word[word_size] = '\0';
+                        size_t adr = 0;
+                        if (shgetp_null(program.strs, word) != NULL) {
+                            adr = shget(program.strs, word).adr;
+                        }
+                        arrput(program.tokens, token_create());
+                        arrput(program.positions, pos_create(argv[1], str_line, str_col));
+                        if (adr == 0) {
+                            shput(program.strs, word, str_create(word, program.idx));
+                            adr = shget(program.strs, word).adr;
+                        }
+                        lex_word_as_token(word, 1, adr);
                     }
-                    arrput(program.tokens, token_create());
-                    arrput(program.positions, pos_create(argv[1], str_line, str_col));
-                    if (adr == 0) {
-                        shput(program.strs, word, str_create(word, program.idx));
-                        adr = shget(program.strs, word).adr;
-                    }
-                    lex_word_as_token(word, 1, adr);
                     if (program.error) {
                         exit(1);
                     }
@@ -1574,7 +1602,7 @@ void program_init(int argc, char **argv) {
                         // TODO: add \nnn \xhh... \uhhhh \Uhhhhhhhh
                         default:
                             fprintf(stderr, "%s:%lu:%lu ERROR: unknown escape sequence: '\\%c'\n", argv[1], line, col, nxt_char);
-                            program.error = 1;
+                            exit(1);
                             break;
                         }
                         nxt_char = fgetc(f);
@@ -1810,6 +1838,16 @@ void generate_assembly_x86_64_linux() {
             fprintf(output, "    pop rcx\n");
             fprintf(output, "    push rax\n");
             fprintf(output, "    push rbx\n");
+            fprintf(output, "    push rcx\n");
+        } break;
+         case OP_OVER: {
+            fprintf(output, ";   over\n");
+            fprintf(output, "    pop rax\n");
+            fprintf(output, "    pop rbx\n");
+            fprintf(output, "    pop rcx\n");
+            fprintf(output, "    push rcx\n");
+            fprintf(output, "    push rbx\n");
+            fprintf(output, "    push rax\n");
             fprintf(output, "    push rcx\n");
         } break;
         case OP_DROP: {
