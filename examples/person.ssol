@@ -1,3 +1,5 @@
+import "std.ssol"
+
 const person.age int 0 end
 const person.name.count int person.age sizeof int + end
 const person.name.data int person.name.count sizeof long + end
@@ -13,11 +15,11 @@ end
 
 proc person.say-hi
     = var person ptr end
-    "Hi, my name is " 1 1 syscall3 drop
+    "Hi, my name is " puts
     person person.name.count + @long
     person person.name.data  + @ptr
-    1 1 syscall3 drop
-    " and i'm " 1 1 syscall3 drop
+    puts
+    " and i'm " puts
     person person.age + @int print
 end
 

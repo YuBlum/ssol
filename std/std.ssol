@@ -1,0 +1,11 @@
+proc write
+    1 1 syscall3
+end
+proc puts
+    write drop
+end
+
+export
+    write
+    puts
+end

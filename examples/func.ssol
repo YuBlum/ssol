@@ -1,4 +1,4 @@
-# currently dont work
+// currently dont work
 
 proc make_grid(rows int cols int) -> ptr do
     memory cols rows * end = var arr2d ptr end

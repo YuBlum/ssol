@@ -1,4 +1,5 @@
+import "std.ssol"
+
 proc main
-    "Hello, World!\n" 1 1 syscall3 drop
-    0
+    "Hello, World!\n" puts
 end

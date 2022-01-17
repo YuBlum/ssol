@@ -22,6 +22,7 @@ The library can be finded in here: https://github.com/nothings/stb/blob/master/s
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <libgen.h>
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
@@ -47,6 +48,7 @@ typedef struct {
     enum {
         OP_PUSH_INT,
         OP_PUSH_STR,
+        // INTRINSICS
         OP_PLUS,
         OP_MINUS,
         OP_MUL,
@@ -74,6 +76,14 @@ typedef struct {
         OP_EQGREATER,
         OP_EQMINOR,
         OP_NOT,
+        OP_SYSCALL0,
+        OP_SYSCALL1,
+        OP_SYSCALL2,
+        OP_SYSCALL3,
+        OP_SYSCALL4,
+        OP_SYSCALL5,
+        OP_SYSCALL6,
+        // KEYWORDS
         OP_IF,
         OP_DO,
         OP_ELSE,
@@ -90,16 +100,11 @@ typedef struct {
         OP_SIZEOF,
         OP_CREATE_PROC,
         OP_CALL_PROC,
+        OP_IMPORT,
+        OP_EXPORT,
         //OP_REPEAT,
         //OP_BREAK,
         OP_END,
-        OP_SYSCALL0,
-        OP_SYSCALL1,
-        OP_SYSCALL2,
-        OP_SYSCALL3,
-        OP_SYSCALL4,
-        OP_SYSCALL5,
-        OP_SYSCALL6,
         OP_COUNT
     } operation;
     char *val;
@@ -139,11 +144,16 @@ typedef struct {
     char *name;
     size_t adr;
     size_t end;
+    size_t file_num;
     struct { char *key; var_t value; } *vars;
     size_t local_var_capacity;
 } proc_t;
 
 typedef struct {
+    size_t file_num;
+    char *file_name;
+    char **file_path;
+
     token_t *tokens;
     pos_t *positions;
 
@@ -152,19 +162,22 @@ typedef struct {
     struct { char *key; str_t value; } *strs;
     struct { char *key; proc_t value; } *procs;
 
+    struct { char *key; size_t *value; } *exports;
+    size_t *imports;
+
     size_t idx;
     int error;
     int condition;
     int loop;
     int setting;
     int address;
+    int exporting;
     int index;
     int size_of;
     int proc_def;
     int local_def;
     int global_def;
     int has_malloc;
-    int has_main;
     size_t idx_amount;
     char *cur_var;
     char *prv_var;
@@ -173,6 +186,7 @@ typedef struct {
 } program_t;
 
 program_t program;
+int has_main_in_files = 0;
 
 char token_name[TKN_COUNT][256] = {
     "id",
@@ -203,6 +217,7 @@ proc_t proc_create(char *name) {
     proc.adr = shlenu(program.procs);
     proc.vars = NULL;
     proc.local_var_capacity = 0;
+    proc.file_num = program.file_num;
     return proc;
 }
 
@@ -386,6 +401,10 @@ int lex_word_as_token(char *word, int is_str, size_t adr) {
         token_set(&program.tokens[idx], TKN_KEYWORD, OP_CREATE_CONST, word);
     } else if (strcmp(word, "proc") == 0) {
         token_set(&program.tokens[idx], TKN_KEYWORD, OP_CREATE_PROC, word);
+    } else if (strcmp(word, "import") == 0) {
+        token_set(&program.tokens[idx], TKN_KEYWORD, OP_IMPORT, word);
+    } else if (strcmp(word, "export") == 0) {
+        token_set(&program.tokens[idx], TKN_KEYWORD, OP_EXPORT, word);
     } else if (strcmp(word, "end") == 0) {
         token_set(&program.tokens[idx], TKN_KEYWORD, OP_END, word);
     } else if (shgetp_null(program.types, word) != NULL) {
@@ -1011,8 +1030,9 @@ int parse_current_token() {
             }
             char *name = tokens[idx].val;
             if (strcmp(name, "main") == 0) {
-                program.has_main = 1;
+                has_main_in_files++;
             }
+            if (has_main_in_files > 1) program_error("multiple definition of main", positions[idx]);
             proc_t proc = proc_create(name);
             shput(program.procs, proc.name, proc);
             arrput(program.cur_proc, proc.name);
@@ -1037,19 +1057,70 @@ int parse_current_token() {
             }
             //program.procs[program.proc_size - 1].end = end;
         } break;
+        case OP_EXPORT: {
+            int end = 0;
+            // TODO: for now exports only accepts procedures
+            if (shgetp_null(program.exports, program.file_name) != NULL) {
+                program_error("'export' already exists for this file", positions[idx]);
+                return 0;
+            }
+            if (idx == arrlenu(tokens)) {
+                program_error("'export' without a end", positions[idx]);
+                return 0;
+            }
+            if (tokens[idx + 1].operation == OP_END) {
+                program_error("'export' is empty", positions[idx]);
+                return 0;
+            }
+            size_t *export = NULL;
+            arrput(export, program.file_num);
+            for (size_t i = idx + 1; i < arrlenu(program.tokens); i++) {
+                if (tokens[i].operation == OP_END) {
+                    end = i;
+                    break;
+                } else if ((shgetp_null(program.procs, tokens[i].val) == NULL || shget(program.procs, tokens[i].val).file_num != program.file_num)) {
+                    char *msg = malloc(sizeof(char) * (strlen(tokens[i].val) + 40));
+                    sprintf(msg, "'%s' is not valid in export", tokens[i].val);
+                    program_error(msg, positions[idx]);
+                    free(msg);
+                    return 0;
+                }
+                arrput(export, shget(program.procs, tokens[i].val).adr);
+            }
+            if (end == 0) {
+                program_error("'export' without a end", positions[idx]);
+                return 0;
+            }
+            shput(program.exports, program.file_name, export);
+            program.idx = end;
+        } break;
+        case OP_IMPORT: {
+            if (idx == arrlenu(tokens) || tokens[idx + 1].type != TKN_STR) {
+                program_error("'import' without a file path", positions[idx + 1]);
+                return 0;
+            }
+            if (shgetp_null(program.exports, tokens[idx + 1].val) == NULL) {
+                char *msg = malloc(sizeof(char) * (28 + strlen(tokens[idx + 1].val)));
+                sprintf(msg, "'%s' is not a valid file", tokens[idx + 1].val);
+                program_error(msg, positions[idx + 1]);
+                free(msg);
+                return 0;
+            }
+            arrput(program.imports, shget(program.exports, tokens[idx + 1].val)[0]);
+        } break;
         case OP_END: {
             size_t end_count = 0;
             int found_open = 0;
-            for (size_t i = idx - 1; i >= 0; i--) {
+            for (long i = idx - 1; i >= 0; i--) {
                 if (tokens[i].type != TKN_KEYWORD) continue;
                 if (idx == 0 || (long)i < 0) break;
                 if (tokens[i].operation == OP_END) end_count++;
-                if ((tokens[i].operation == OP_IF  && tokens[i - 1].operation != OP_ELSE) || tokens[i].operation == OP_LOOP || tokens[i].operation == OP_CREATE_VAR || tokens[i].operation == OP_CREATE_PROC) {
+                if ((tokens[i].operation == OP_IF  && tokens[i - 1].operation != OP_ELSE) || tokens[i].operation == OP_LOOP || tokens[i].operation == OP_CREATE_VAR || tokens[i].operation == OP_CREATE_PROC || tokens[i].operation == OP_EXPORT) {
                     if (end_count > 0) {
                         end_count--;
                     } else {
                         found_open = 1;
-                        program.condition = tokens[i].operation != OP_CREATE_VAR && tokens[i].operation != OP_CREATE_PROC;
+                        program.condition = tokens[i].operation != OP_CREATE_VAR && tokens[i].operation != OP_CREATE_PROC && tokens[i].operation != OP_EXPORT;
                         if (tokens[i].operation == OP_LOOP) {
                             program.loop = 1;
                             tokens[idx].jmp = i;
@@ -1340,10 +1411,22 @@ int parse_current_token() {
         }
         // find proc
         if (shgetp_null(program.procs, tokens[idx].val) != NULL) {
-            tokens[idx].operation = OP_CALL_PROC;
-            arrput(program.cur_proc, tokens[idx].val);
-            find = 1;
-            break;
+            if (shget(program.procs, tokens[idx].val).file_num == program.file_num) {
+                tokens[idx].operation = OP_CALL_PROC;
+                arrput(program.cur_proc, tokens[idx].val);
+                find = 1;
+                break;
+            }
+            if (!find) {
+                for (size_t i = 0; i < arrlenu(program.imports); i++) {
+                    if (shget(program.procs, tokens[idx].val).file_num == program.imports[i]) {
+                        tokens[idx].operation = OP_CALL_PROC;
+                        arrput(program.cur_proc, tokens[idx].val);
+                        find = 1;
+                        break;
+                    }
+                }
+            }
         }
         if (!find) {
             char *msg = malloc(strlen(tokens[idx].val) + 20);
@@ -1375,59 +1458,15 @@ int parse_current_token() {
     return 1;
 }
 
-void program_init(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "[ERROR] File not provided\n[INFO] ssol needs one parameter, the .ssol file\n");
-        exit(1);
-    }
-    FILE *f = fopen(argv[1], "r");
+void lex_file(char *file_name) {
+    FILE *f = fopen(file_name, "r");
     if (f == NULL) {
-        fprintf(stderr, "[ERROR] File '%s' don't exists or can't be openned\n", argv[1]);
+        fprintf(stderr, "[ERROR] FIle '%s' don't exist's or is not writable\n", file_name);
         exit(1);
     }
-
-    program.idx = 0;
-
-    program.positions = NULL;
-    program.tokens = NULL;
-
-    program.types = NULL;
-    program.vars = NULL;
-    program.strs = NULL;
-    program.procs = NULL;
-
-    program.condition = 0;
-    program.setting = 0;
-    program.address = 0;
-    program.loop = 0;
-    program.error = 0;
-    program.proc_def = 0;
-    program.has_malloc = 0;
-    program.has_main = 0;
-    program.size_of = 0;
-    program.local_def = 0;
-    program.global_def = 0;
-
-    program.cur_proc = NULL;
-
-    vartype_t vt;
-    vt = vartype_create("byte", sizeof(char), 1);
-    shput(program.types, vt.name, vt);
-
-    vt = vartype_create("short", sizeof(short), 1);
-    shput(program.types, vt.name, vt);
-
-    vt = vartype_create("int", sizeof(int), 1);
-    shput(program.types, vt.name, vt);
-    
-    vt = vartype_create("long", sizeof(long), 1);
-    shput(program.types, vt.name, vt);
-
-    vt = vartype_create("ptr", sizeof(void *), 1);
-    shput(program.types, vt.name, vt);
 
     char *word = malloc(sizeof(char));
-    malloc_check(word, "malloc(word) in function program_init");
+    malloc_check(word, "malloc(word) in function lex_file");
     size_t word_size = 0;
     size_t word_alloc = 1;
     
@@ -1463,13 +1502,13 @@ void program_init(int argc, char **argv) {
                     if (word_size > 0) {
                         word[word_size] = '\0';
                         arrput(program.tokens, token_create());
-                        arrput(program.positions, pos_create(argv[1], line, col_word));
+                        arrput(program.positions, pos_create(file_name, line, col_word));
                         lex_word_as_token(word, 0, 0);
                         if (program.error) {
                             exit(1);
                         }
                         word = malloc(sizeof(char));
-                        malloc_check(word, "malloc(word) in function program_init");
+                        malloc_check(word, "malloc(word) in function lex_file");
                         word_size = 0;
                         word_alloc = 1;
                     }
@@ -1488,13 +1527,13 @@ void program_init(int argc, char **argv) {
                         word[0] = cur_char;
                         word[1] = '\0';
                         arrput(program.tokens, token_create());
-                        arrput(program.positions, pos_create(argv[1], line, col_word));
+                        arrput(program.positions, pos_create(file_name, line, col_word));
                         lex_word_as_token(word, 0, 0); 
                         if (program.error) {
                             exit(1);
                         }
                         word = malloc(sizeof(char));
-                        malloc_check(word, "malloc(word) in function program_init");
+                        malloc_check(word, "malloc(word) in function lex_file");
                         word_size = 0;
                         word_alloc = 1;
                     }
@@ -1504,7 +1543,7 @@ void program_init(int argc, char **argv) {
                 if (word_size >= word_alloc) {
                     word_alloc *= 2;
                     word = realloc(word, sizeof(char) *word_alloc);
-                    malloc_check(word, "realloc(word) in function program_init");
+                    malloc_check(word, "realloc(word) in function lex_file");
                 }
                 word[word_size - 1] = cur_char;
             } else {
@@ -1513,7 +1552,7 @@ void program_init(int argc, char **argv) {
                     if (is_char) {
                         is_char = 0;
                         if (word_size != 1) {
-                            fprintf(stderr, "%s:%lu:%lu ERROR: invalid character: '%s'\n", argv[1], line, col, word);
+                            fprintf(stderr, "%s:%lu:%lu ERROR: invalid character: '%s'\n", file_name, line, col, word);
                             exit(1);
                         }
                         int c = word[0];
@@ -1522,7 +1561,7 @@ void program_init(int argc, char **argv) {
                         sprintf(word, "%d", c);
 
                         arrput(program.tokens, token_create());
-                        arrput(program.positions, pos_create(argv[1], str_line, str_col));
+                        arrput(program.positions, pos_create(file_name, str_line, str_col));
                         lex_word_as_token(word, 0, 0);
                     } else {
                         word[word_size] = '\0';
@@ -1531,7 +1570,7 @@ void program_init(int argc, char **argv) {
                             adr = shget(program.strs, word).adr;
                         }
                         arrput(program.tokens, token_create());
-                        arrput(program.positions, pos_create(argv[1], str_line, str_col));
+                        arrput(program.positions, pos_create(file_name, str_line, str_col));
                         if (adr == 0) {
                             shput(program.strs, word, str_create(word, program.idx));
                             adr = shget(program.strs, word).adr;
@@ -1542,7 +1581,7 @@ void program_init(int argc, char **argv) {
                         exit(1);
                     }
                     word = malloc(sizeof(char));
-                    malloc_check(word, "malloc(word) in function program_init");
+                    malloc_check(word, "malloc(word) in function lex_file");
                     word_size = 0;
                     word_alloc = 1;
                     line = str_line;
@@ -1557,7 +1596,7 @@ void program_init(int argc, char **argv) {
                     if (word_size >= word_alloc) {
                         word_alloc *= 2;
                         word = realloc(word, sizeof(char) *word_alloc);
-                        malloc_check(word, "realloc(word) in function program_init");
+                        malloc_check(word, "realloc(word) in function lex_file");
                     }
                     if (cur_char != '\\') {
                         word[word_size - 1] = cur_char;
@@ -1601,7 +1640,7 @@ void program_init(int argc, char **argv) {
                             break;
                         // TODO: add \nnn \xhh... \uhhhh \Uhhhhhhhh
                         default:
-                            fprintf(stderr, "%s:%lu:%lu ERROR: unknown escape sequence: '\\%c'\n", argv[1], line, col, nxt_char);
+                            fprintf(stderr, "%s:%lu:%lu ERROR: unknown escape sequence: '\\%c'\n", file_name, line, col, nxt_char);
                             exit(1);
                             break;
                         }
@@ -1615,16 +1654,65 @@ void program_init(int argc, char **argv) {
     }
     free(word);
     fclose(f);
+}
+
+void file_open(int file_num, char *file_path, int start) {
+    program.file_num = file_num;
+    arrput(program.file_path, malloc(strlen(file_path) + 1));
+    strcpy(program.file_path[arrlenu(program.file_path) - 1], file_path);
+    program.file_name = basename(program.file_path[arrlenu(program.file_path) - 1]);
+    program.idx = start;
+
+
+    program.types = NULL;
+    program.vars = NULL;
+    program.strs = NULL;
+    program.imports = NULL;
+
+    program.condition = 0;
+    program.setting = 0;
+    program.address = 0;
+    program.exporting = 0;
+    program.loop = 0;
+    program.error = 0;
+    program.proc_def = 0;
+    program.has_malloc = 0;
+    program.size_of = 0;
+    program.local_def = 0;
+    program.global_def = 0;
+
+    program.cur_proc = NULL;
+
+    vartype_t vt;
+    vt = vartype_create("byte", sizeof(char), 1);
+    shput(program.types, vt.name, vt);
+
+    vt = vartype_create("short", sizeof(short), 1);
+    shput(program.types, vt.name, vt);
+
+    vt = vartype_create("int", sizeof(int), 1);
+    shput(program.types, vt.name, vt);
+    
+    vt = vartype_create("long", sizeof(long), 1);
+    shput(program.types, vt.name, vt);
+
+    vt = vartype_create("ptr", sizeof(void *), 1);
+    shput(program.types, vt.name, vt);
+
+    lex_file(program.file_path[arrlenu(program.file_path) - 1]);
 
 //    for (size_t i = 0; i < arrlenu(program.tokens); i++) {
 //        printf("token: %s, val: %s\n", token_name[program.tokens[i].type], program.tokens[i].val);
 //    }
 
-    program.idx = 0;
+    program.idx = start;
 }
 
 void generate_assembly_x86_64_linux() {
-    FILE *output = fopen("output.asm", "w");
+    char *asmfile = malloc(sizeof(char) * 37);
+    sprintf(asmfile, "file%lu.asm", program.file_num);
+    FILE *output = fopen(asmfile, "w");
+    free(asmfile);
     if (output == NULL) {
         fprintf(stderr, "[ERROR] Failed to create output.asm\n");
         exit(1);
@@ -1666,6 +1754,9 @@ void generate_assembly_x86_64_linux() {
     fprintf(output, "    add rsp,32\n");
     fprintf(output, "    ret\n");
 
+    if (program.file_num > 1) {
+        fprintf(output, "extern $RET, $RETP\n");
+    }
     while (parse_current_token(program)) {
         size_t idx = program.idx;
         switch (program.tokens[idx].operation) {
@@ -2221,15 +2312,14 @@ void generate_assembly_x86_64_linux() {
         } break;
         case OP_CREATE_PROC: {
             program.idx++;
-            int is_main = program.has_main && strcmp(program.tokens[idx + 1].val, "main") == 0;
-            if (is_main) {
-                fprintf(output, "global main\n");
-            }
+            int is_main = has_main_in_files && strcmp(program.tokens[idx + 1].val, "main") == 0;
             fprintf(output, ";   create proc\n");
             if (is_main) {
+                fprintf(output, "global main\n");
                 fprintf(output, "main:\n");
                 fprintf(output, "    mov qword [$RETP], $RET\n");
             } else {
+                fprintf(output, "global $PROC%lu\n", shget(program.procs, program.cur_proc[arrlen(program.cur_proc) - 1]).adr);
                 fprintf(output, "$PROC%lu:\n", shget(program.procs, program.cur_proc[arrlen(program.cur_proc) - 1]).adr);
             }
             fprintf(output, "    mov rax,qword [$RETP]\n");
@@ -2250,6 +2340,14 @@ void generate_assembly_x86_64_linux() {
         case OP_LOOP: {
             fprintf(output, ";   loop\n");
             fprintf(output, "$ADR%lu:\n", program.idx);
+        } break;
+        case OP_IMPORT: {
+            program.idx++;
+            fprintf(output, ";   import\n");
+            size_t *export = shget(program.exports, program.tokens[program.idx].val);
+            for (size_t i = 1; i < arrlenu(export); i++) {
+                fprintf(output, "extern $PROC%lu\n", export[i]);
+            }
         } break;
         case OP_END: {
             if (program.condition) {
@@ -2411,8 +2509,13 @@ void generate_assembly_x86_64_linux() {
             }
         }
     }
-    fprintf(output, "$RET: resb %u\n", RET_STACK_CAP);
-    fprintf(output, "$RETP: resq 1\n");
+    if (program.file_num == 0) {
+        fprintf(output, "global $RET, $RETP\n");
+        fprintf(output, "$RET: resb %u\n", RET_STACK_CAP);
+        fprintf(output, "$RETP: resq 1\n");
+    } else {
+        fprintf(output, "extern $RET, $RETP\n");
+    }
     fprintf(output, "segment .data\n");
     for (size_t i = 0; i < shlenu(program.strs); i++) {
         str_t str = program.strs[i].value;
@@ -2449,26 +2552,53 @@ void generate_assembly_x86_64_linux() {
         }
     }
 
-    if (!program.has_main) {
-        fprintf(stderr, "ERROR: program without a main entry point\n");
-        exit(1);
-    }
 
     fclose(output);
-    system("nasm -felf64 -g output.asm -o output.o");
-    system("gcc -no-pie -o output output.o");
+    char *cmd = malloc(sizeof(char) * 104);
+    sprintf(cmd,"nasm -felf64 -g file%lu.asm -o file%lu.o", program.file_num, program.file_num); 
+    system(cmd);
+    free(cmd);
 }
 
-void program_quit() {
+void file_close() {
     arrfree(program.cur_proc);
-    for (size_t i = 0; i < arrlenu(program.tokens); i++) {
-        free(program.tokens[i].val);
-    }
     for (size_t i = 0; i < shlenu(program.types); i++) {
         free(program.types[i].value.name);
     }
     for (size_t i = 0; i < shlenu(program.vars); i++) {
         free(program.vars[i].value.name);
+    }
+    shfree(program.types);
+    shfree(program.vars);
+    shfree(program.strs);
+    arrfree(program.imports);
+}
+
+void program_init() {
+    program.procs = NULL;
+    program.exports = NULL;
+    program.tokens = NULL;
+    program.positions = NULL;
+    program.file_path = NULL;
+}
+
+void program_generate_obj_files(int argc, char **argv, char *std, char *file, char *link) {
+    strcpy(link, "gcc -no-pie -o output");
+    for (size_t i = 0; i < argc; i++) {
+        file_open(i, i == 0 ? std : argv[i], arrlenu(program.tokens));
+        generate_assembly_x86_64_linux();
+        file_close();
+        sprintf(file, " file%lu.o", i);
+        strcat(link, file);
+    }
+}
+
+void program_finish(char *file, char *link, char *std) {
+    for (size_t i = 0; i < arrlenu(program.tokens); i++) {
+        free(program.tokens[i].val);
+    }
+    for (size_t i = 0; i < arrlenu(program.file_path); i++) {
+        free(program.file_path[i]);
     }
     for (size_t i = 0; i < shlenu(program.procs); i++) {
         for (size_t j = 0; j < shlenu(program.procs[i].value.vars); j++) {
@@ -2476,18 +2606,43 @@ void program_quit() {
         }
         shfree(program.procs[i].value.vars);
     }
-    arrfree(program.positions);
+    for (size_t i = 0; i < shlenu(program.exports); i++) {
+        arrfree(program.exports[i].value);
+    }
     arrfree(program.tokens);
-    shfree(program.types);
-    shfree(program.vars);
-    shfree(program.strs);
+    arrfree(program.positions);
+    arrfree(program.file_path);
     shfree(program.procs);
+    shfree(program.exports);
+
+    if (!has_main_in_files) {
+        fprintf(stderr, "ERROR: program without a main entry point\n");
+        exit(1);
+    }
+    system(link);
+    free(link);
+    free(file);
+    free(std);
 }
 
 int main(int argc, char **argv) {
-    program_init(argc, argv);
-    generate_assembly_x86_64_linux();
-    program_quit();
+    if (argc < 2) {
+        fprintf(stderr, "[ERROR] File not provided\n[INFO] ssol needs at least one file path\n");
+        exit(1);
+    }
+    char *file = malloc(sizeof(char) * 38);
+    char *file_path = malloc(strlen(argv[0]) + 1);
+    char *link = malloc(sizeof(char) * (40 * (argc + 1)));
+    strcpy(file_path, argv[0]);
+    dirname(file_path);
+    char *std_path = malloc(strlen(file_path) + 14);
+    strcpy(std_path, file_path);
+    strcat(std_path, "/std/std.ssol");
+    free(file_path);
+
+    program_init();
+    program_generate_obj_files(argc, argv, std_path, file, link);
+    program_finish(file, link, std_path);
     return 0;
 }
 

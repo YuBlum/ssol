@@ -13,7 +13,7 @@ endif
 syntax keyword ssolTodos TODO XXX FIXME NOTE
 
 " Keywords
-syntax keyword ssolKeywords if else loop do proc const var end
+syntax keyword ssolKeywords if else loop do proc const var end import export
 
 " Comments
 syntax region ssolCommentLine start="//" end="$"   contains=ssolTodos
